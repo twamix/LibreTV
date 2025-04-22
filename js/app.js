@@ -1058,7 +1058,7 @@ function toggleEpisodeOrder() {
                  >
                  <div class="relative w-full aspect-[2/3] overflow-hidden rounded-md">
                      <img 
-                     src="${PROXY_URL + encodeURIComponent(tv.cover)}" 
+                     src="${tv.cover}" 
                      alt="${tv.title}" 
                      class="object-cover rounded-md group-hover:opacity-90 transition duration-300 ease-in-out"
                      />
