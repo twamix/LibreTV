@@ -13,7 +13,7 @@ function isPasswordProtected() {
 
 /**
  * 检查用户是否已通过密码验证
- * 检查localStorage中的验证状态和时间戳是否有效
+ * 检查localStorage中的验证状态和时间戳是否有效，并确认密码哈希未更改
  */
 function isPasswordVerified() {
     try {
@@ -23,10 +23,13 @@ function isPasswordVerified() {
         }
 
         const verificationData = JSON.parse(localStorage.getItem(PASSWORD_CONFIG.localStorageKey) || '{}');
-        const { verified, timestamp } = verificationData;
+        const { verified, timestamp, passwordHash } = verificationData;
         
-        // 验证是否已验证且未过期
-        if (verified && timestamp) {
+        // 获取当前环境中的密码哈希
+        const currentHash = window.__ENV__ && window.__ENV__.PASSWORD;
+        
+        // 验证是否已验证、未过期，且密码哈希未更改
+        if (verified && timestamp && passwordHash === currentHash) {
             const now = Date.now();
             const expiry = timestamp + PASSWORD_CONFIG.verificationTTL;
             return now < expiry;
@@ -53,7 +56,8 @@ async function verifyPassword(password) {
     if (isValid) {
         const verificationData = {
             verified: true,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            passwordHash: correctHash // 保存当前密码的哈希值
         };
         localStorage.setItem(PASSWORD_CONFIG.localStorageKey, JSON.stringify(verificationData));
     }
@@ -62,10 +66,17 @@ async function verifyPassword(password) {
 
 // SHA-256实现，可用Web Crypto API
 async function sha256(message) {
-    const msgBuffer = new TextEncoder().encode(message);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    if (window.crypto && crypto.subtle && crypto.subtle.digest) {
+        const msgBuffer = new TextEncoder().encode(message);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    // HTTP 下调用原始 js‑sha256
+    if (typeof window._jsSha256 === 'function') {
+        return window._jsSha256(message);
+    }
+    throw new Error('No SHA-256 implementation available.');
 }
 
 /**
