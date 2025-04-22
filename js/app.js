@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 设置默认API选择（如果是第一次加载）
     if (!localStorage.getItem('hasInitializedDefaults')) {
         // 仅选择黑木耳源
-        selectedAPIs = ["heimuer"];
+        selectedAPIs = ["heimuer", "ffzy", "tyyszy", "cjhw", "zy360", "wolong", "jisu", "hwba", "dbzy", "bfzy", "mozhua", "mdzy", "ruyi", "zuid", "suoni"];
         localStorage.setItem('selectedAPIs', JSON.stringify(selectedAPIs));
         
         // 默认选中过滤开关
