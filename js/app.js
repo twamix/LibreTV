@@ -1,5 +1,5 @@
 // 全局变量
-let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '["heimuer"]'); // 默认选中黑木耳
+let selectedAPIs = JSON.parse(localStorage.getItem('selectedAPIs') || '["heimuer","ffzy","tyyszy","cjhw","zy360","wolong","jisu","hwba","dbzy","bfzy","mozhua","mdzy","ruyi","zuid","suoni"]');// 默认选中黑木耳
 let customAPIs = JSON.parse(localStorage.getItem('customAPIs') || '[]'); // 存储自定义API列表
 
 // 添加当前播放的集数索引
@@ -935,7 +935,7 @@ function playVideo(url, vod_name, episodeIndex = 0) {
     const playerUrl = `player.html?url=${encodeURIComponent(url)}&title=${encodeURIComponent(videoTitle)}&index=${episodeIndex}&source=${encodeURIComponent(sourceName)}`;
     
     // 在新标签页中打开播放页面
-    window.open(playerUrl, '_blank');
+    window.location.href = playerUrl;
 }
 
 // 播放上一集
