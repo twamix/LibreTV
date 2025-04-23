@@ -96,11 +96,6 @@ const API_SITES = {
         name: 'souav资源',
         adult: true
     },
-    siwa: {
-        api: 'https://siwazyw.tv',
-        name: '丝袜资源',
-        adult: true
-    },
     r155: {
         api: 'https://155api.com',
         name: '155资源',
@@ -120,10 +115,6 @@ const API_SITES = {
     zuid: {
         api: 'https://api.zuidapi.com',
         name: '最大资源'
-    },
-    suoni: {
-        api: 'https://suoniapi.com',
-        name: '索尼资源'
     },
     yutu: {
         api: 'https://yutuzy10.com',
