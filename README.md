@@ -22,10 +22,9 @@ LibreTV Next.js 迁移版：免费在线视频聚合搜索与观看平台。基�
 ### Docker（推荐）
 
 ```bash
-# 在 .env 中设置 PASSWORD
-echo "PASSWORD=your-password" > .env
-
 # 方式一：拉取发布镜像（零构建）
+# docker-compose.yml 已内置可直接启动的默认密码（PASSWORD / ADULT_PASSWORD = 11111，按需编辑修改）；
+# 如需固定镜像版本，在 .env 中设置 LIBRETV_IMAGE=ghcr.io/twamix/libretv:<版本>
 docker compose pull && docker compose up -d
 
 # 方式二：源码构建
@@ -184,6 +183,12 @@ CI 校验通过后自动构建并推送 `ghcr.io/twamix/libretv:<版本>`（详�
 | [OrangeTV](https://github.com/djteang/OrangeTV) | 跨平台影视聚合播放器（Next.js），Kvrocks/Redis/Upstash 多存储与多端同步 |
 
 > 旧版 LibreTV（静态 HTML + Express）完整代码见 [backup-2025 分支](https://github.com/twamix/LibreTV/tree/backup-2025)。
+
+## 版权与致谢
+
+本项目为 [LibreTV](https://github.com/LibreSpark/LibreTV)（原 LibreTV-Next，作者 [bestZwei](https://github.com/bestZwei)）的二次开发衍生版本。感谢上游作者及 LibreTV 开源社区的贡献——聚合搜索、数据源订阅、播放内核等核心能力均继承自上游项目。
+
+本项目基于 **AGPL-3.0** 协议开源，代码版权归原作者及所有贡献者共同所有（含本仓库对上游代码的修改）。在遵守 [LICENSE](LICENSE) 条款的前提下，可自由使用、修改与再分发。
 
 ## 免责声明
 

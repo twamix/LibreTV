@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SourceConfig, LiveSourceConfig, SourceSearchOutcome } from './types';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
+import { api } from './client-api';
 
 /**
  * 全局设置（zustand + localStorage 持久化）。
@@ -145,12 +146,12 @@ interface AppState extends AppSettings {
   removeCustomApi: (key: string) => void;
   toggleSourceSelected: (key: string) => void;
   setSelectedKeys: (keys: string[]) => void;
-  setEnvSources: (list: SourceConfig[]) => void;
+  setEnvSources: (list: SourceConfig[]) => string[];
   addSubscription: (url: string, name?: string) => void;
   removeSubscription: (url: string) => void;
   markSubscriptionSynced: (url: string, name?: string) => void;
-  /** 用订阅内容整体替换该订阅名下的点播源，返回新增数量 */
-  applySubscriptionSources: (subUrl: string, list: Omit<SourceConfig, 'key'>[]) => number;
+  /** 用订阅内容整体替换该订阅名下的点播源，返回导入数量与新导入的源 key（后者供测速自动勾选） */
+  applySubscriptionSources: (subUrl: string, list: Omit<SourceConfig, 'key'>[]) => { count: number; freshKeys: string[] };
   /** 用订阅内容整体替换该订阅名下的直播源，返回新增数量 */
   applySubscriptionLive: (subUrl: string, list: Omit<LiveSourceConfig, 'key'>[]) => number;
   setLiveEnvSources: (list: LiveSourceConfig[]) => void;
@@ -263,19 +264,14 @@ export const useAppStore = create<AppState>()(
       setSelectedKeys: (keys) => set({ selectedKeys: keys }),
 
       setEnvSources: (list) => {
-        // 预置源首次出现时自动勾选（开箱即搜）；用户此后取消勾选不会被反复勾回
+        // 预置源首次出现时不做全量勾选：由调用方经 autoSelectFastest 按实测耗时勾选最低的 N 个
         const seen = new Set(get().envKeysSeen);
         const freshKeys = list.map((s) => s.key).filter((k) => !seen.has(k));
-        // 成人内容过滤开启或未解锁时，成人预置源不自动勾选
-        const toSelect = freshKeys.filter((k) => {
-          const src = list.find((s) => s.key === k);
-          return !src?.isAdult || (!get().yellowFilter && get().adultUnlocked);
-        });
         set({
           envSources: list,
           envKeysSeen: [...get().envKeysSeen, ...freshKeys],
-          selectedKeys: [...get().selectedKeys, ...toSelect],
         });
+        return freshKeys;
       },
 
       addSubscription: (url, name) => {
@@ -327,18 +323,21 @@ export const useAppStore = create<AppState>()(
           ...s,
           key: `${prefix}_${i}`,
         }));
-        // 新源自动勾选（过滤开启或未解锁时跳过成人源），已有源维持原勾选状态
+        // 只保留用户此前勾选的源；新导入的源不默认全选，交给 autoSelectFastest 按实测耗时选前 N 个
         const toSelect = incoming
           .filter((s) => {
             const u = s.url.replace(/\/+$/, '');
-            return prevUrlSet.has(u) ? prevSelectedUrls.has(u) : !s.isAdult || (!get().yellowFilter && get().adultUnlocked);
+            return prevUrlSet.has(u) && prevSelectedUrls.has(u);
           })
+          .map((s) => s.key);
+        const freshKeys = incoming
+          .filter((s) => !prevUrlSet.has(s.url.replace(/\/+$/, '')))
           .map((s) => s.key);
         set({
           customAPIs: [...keptCustom, ...incoming],
           selectedKeys: [...get().selectedKeys.filter((k) => !k.startsWith(prefix)), ...toSelect],
         });
-        return incoming.length;
+        return { count: incoming.length, freshKeys };
       },
 
       applySubscriptionLive: (subUrl, list) => {
@@ -624,4 +623,50 @@ export function isSourceDisabled(
 ): boolean {
   const e = state.sourceHealth[key];
   return !!e?.disabledUntil && e.disabledUntil > now;
+}
+
+/** 测速后自动勾选的耗时最低来源数量 */
+export const AUTO_SELECT_FASTEST_TOP = 6;
+/** 测速探活并发上限，避免一次性压垮上游 */
+const AUTO_SELECT_CONCURRENCY = 5;
+
+/**
+ * 对候选点播源做探活测速，自动勾选耗时最低的 N 个（默认 6）。
+ * 已勾选、被过滤/未解锁的成人源排除在候选外；测速失败或超时的源跳过，
+ * 因此源数量不足 N 时勾选到几个算几个。用户的既有勾选保持不变。
+ */
+export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SELECT_FASTEST_TOP): Promise<void> {
+  const state = useAppStore.getState();
+  const all = [...state.customAPIs, ...state.envSources];
+  const candidates = candidateKeys
+    .map((key) => all.find((s) => s.key === key))
+    .filter(
+      (s): s is SourceConfig =>
+        !!s &&
+        !state.selectedKeys.includes(s.key) &&
+        !(s.isAdult && (state.yellowFilter || !state.adultUnlocked))
+    );
+  if (candidates.length === 0) return;
+
+  const results: { key: string; ms: number }[] = [];
+  const queue = [...candidates];
+  const workers = Array.from({ length: AUTO_SELECT_CONCURRENCY }, async () => {
+    for (;;) {
+      const src = queue.shift();
+      if (!src) break;
+      try {
+        const r = await api.testSource(src.url);
+        if (r.ok && r.ms > 0) results.push({ key: src.key, ms: r.ms });
+      } catch {
+        // 单个源测速失败不影响其余候选
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  if (results.length === 0) return;
+  results.sort((a, b) => a.ms - b.ms);
+  const keys = results.slice(0, topN).map((r) => r.key);
+  const cur = useAppStore.getState().selectedKeys;
+  useAppStore.getState().setSelectedKeys([...new Set([...cur, ...keys])]);
 }

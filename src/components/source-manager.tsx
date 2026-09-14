@@ -60,10 +60,13 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
   /** 成人源被锁定时的提示文案 */
   const adultSourceHint = (isAdult?: boolean) => {
     if (!isAdult) return undefined;
-    if (!store.adultUnlocked) return '成人源已锁定：需在下方输入密码解锁';
+    if (!store.adultUnlocked) return '成人内容源已隐藏，解锁后可见';
     if (store.yellowFilter) return '成人内容过滤开启中，需先关闭过滤才能启用此源';
     return undefined;
   };
+  // 未解锁成人源时，成人内容源在列表中隐藏（解锁入口就在点播源内，保持隐蔽）
+  const visibleEnv = store.envSources.filter((s) => !s.isAdult || store.adultUnlocked);
+  const visibleCustom = store.customAPIs.filter((s) => !s.isAdult || store.adultUnlocked);
 
   /** 搜索健康度徽章：展示最近一次搜索该源的结果；被自动停用的源提供手动恢复入口 */
   const healthBadge = (key: string) => {
@@ -178,6 +181,8 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
             </button>
           }
         />
+        {/* 成人内容解锁入口直接内嵌在点播源中，紧凑隐蔽 */}
+        {store.adultConfigured && <AdultUnlockPanel />}
         <SourceForm
           visible={editing === '__new__'}
           onCancel={() => setEditing(null)}
@@ -192,9 +197,9 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
           <>
             {/* 源很多时限高内滚，避免 tab 内长滚 */}
             <div className="max-h-[50vh] overflow-y-auto scrollbar-thin pr-1">
-            {store.envSources.length > 0 && (
+            {visibleEnv.length > 0 && (
               <ul className="space-y-2 mb-2">
-                {store.envSources.map((api) => (
+                {visibleEnv.map((api) => (
                   <li key={api.key} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
                     <div className="flex items-center gap-2">
                       <input
@@ -228,8 +233,9 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
                 ))}
               </ul>
             )}
+            {visibleCustom.length > 0 && (
             <ul className="space-y-2">
-            {store.customAPIs.map((api) => {
+            {visibleCustom.map((api) => {
               const fromSubscription = api.key.startsWith('sub_');
               return (
               <li key={api.key} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
@@ -321,16 +327,11 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
               );
             })}
             </ul>
+            )}
             </div>
           </>
         )}
       </section>
-      {/* 部署者配置了 ADULT_PASSWORD 时，点播源底部提供成人源解锁入口 */}
-      {store.adultConfigured && (
-        <section className="mb-6 pt-5 border-t border-line">
-          <AdultUnlockPanel />
-        </section>
-      )}
       </>
       )}
 
@@ -424,8 +425,9 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
 }
 
 /**
- * 成人内容源解锁：部署者设置 ADULT_PASSWORD 后，展示在「点播源」底部。
- * 输入正确密码 → 服务端下发签名 cookie → 解锁状态写入 store，(18+) 源即可勾选使用。
+ * 成人内容源解锁（内嵌在「点播源」中）。
+ * 部署者设置 ADULT_PASSWORD 后展示；未解锁时成人源在列表中隐藏，
+ * 在此输入密码解锁后 (18+) 源才可见可用。
  */
 function AdultUnlockPanel() {
   const store = useAppStore();
@@ -442,7 +444,7 @@ function AdultUnlockPanel() {
       // 解锁即视为允许成人内容：若过滤仍开启则一并关闭，让 (18+) 源真正可用
       if (store.yellowFilter) store.updateSettings({ yellowFilter: false });
       setPassword('');
-      toast('成人源已解锁', 'success');
+      toast('已解锁', 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : '解锁失败', 'error');
     } finally {
@@ -455,51 +457,40 @@ function AdultUnlockPanel() {
       await api.adultLock();
     } catch { /* 失败也不阻塞本地锁定 */ }
     store.setAdultUnlocked(false);
-    toast('已锁定成人源', 'info');
+    toast('已锁定', 'info');
   };
 
+  if (store.adultUnlocked) {
+    return (
+      <div className="flex items-center justify-between gap-2 py-1.5 mb-2 rounded-lg bg-chip px-2">
+        <span className="text-xs text-green-600 dark:text-green-400">成人内容已解锁</span>
+        <button className="text-xs text-muted hover:text-accent transition-colors" onClick={lock}>
+          锁定
+        </button>
+      </div>
+    );
+  }
   return (
-    <>
-      <SectionTitle
-        title="成人内容解锁"
-        extra={
-          store.adultUnlocked ? (
-            <button className="btn-ghost !py-1 !px-2.5 text-xs" onClick={lock}>
-              锁定
-            </button>
-          ) : undefined
-        }
+    <div className="flex items-center gap-2 py-1.5 mb-2 rounded-lg bg-chip px-2">
+      <input
+        type="password"
+        className="input flex-1 !py-1.5 text-xs"
+        placeholder="成人内容密码"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') unlock();
+        }}
+        autoComplete="off"
       />
-      {store.adultUnlocked ? (
-        <p className="text-xs text-green-600 dark:text-green-400">
-          已解锁，标记为 (18+) 的成人内容源现在可以被启用。
-        </p>
-      ) : (
-        <div className="flex gap-2">
-          <input
-            type="password"
-            className="input w-full"
-            placeholder="输入管理员设置的成人源密码"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') unlock();
-            }}
-            autoComplete="off"
-          />
-          <button
-            className="btn-primary !py-1.5 text-xs shrink-0"
-            disabled={loading || !password.trim()}
-            onClick={unlock}
-          >
-            {loading ? '验证中...' : '解锁'}
-          </button>
-        </div>
-      )}
-      <p className="text-xs text-faint mt-2">
-        密码由部署者在部署配置（docker-compose.yml 的 ADULT_PASSWORD）中设置；解锁状态仅保存在本浏览器。
-      </p>
-    </>
+      <button
+        className="btn-primary !py-1.5 !px-2.5 text-xs shrink-0"
+        disabled={loading || !password.trim()}
+        onClick={unlock}
+      >
+        {loading ? '...' : '解锁'}
+      </button>
+    </div>
   );
 }
 

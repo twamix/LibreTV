@@ -5,7 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ToastProvider } from './toast';
 import { AuthProvider } from './auth';
 import { ThemeProvider } from './theme';
-import { useAppStore, hydrateLiveProbeResults } from '@/lib/store';
+import { useAppStore, hydrateLiveProbeResults, autoSelectFastest } from '@/lib/store';
 import { syncEnvSubscriptions } from '@/lib/subscription-sync';
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -40,7 +40,9 @@ export function Providers({ children }: { children: ReactNode }) {
           useAppStore.getState().setAdultUnlocked(d.adultUnlocked);
         }
         if (d && Array.isArray(d.defaultSources)) {
-          useAppStore.getState().setEnvSources(d.defaultSources);
+          const fresh = useAppStore.getState().setEnvSources(d.defaultSources);
+          // 预置点播源默认不全选：探活测速后自动勾选耗时最低的 6 个
+          if (fresh.length > 0) void autoSelectFastest(fresh);
         }
         if (d && Array.isArray(d.defaultLiveSources)) {
           useAppStore.getState().setLiveEnvSources(d.defaultLiveSources);

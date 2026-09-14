@@ -1,7 +1,7 @@
 'use client';
 
 import { api } from './client-api';
-import { useAppStore } from './store';
+import { useAppStore, autoSelectFastest } from './store';
 
 /**
  * SourceList 订阅同步核心逻辑，供两处复用：
@@ -23,7 +23,9 @@ export async function syncSourceSubscription(url: string): Promise<SubscriptionS
     throw new Error('订阅内容为空');
   }
   const store = useAppStore.getState();
-  const vodCount = store.applySubscriptionSources(url, sources);
+  const { count: vodCount, freshKeys } = store.applySubscriptionSources(url, sources);
+  // 新导入的点播源不默认全选：探活测速后自动勾选耗时最低的 6 个
+  if (freshKeys.length > 0) void autoSelectFastest(freshKeys);
   const liveCount = store.applySubscriptionLive(url, liveSources);
   // 仅对本订阅实际导入的直播源记录同步时间：
   // 被其他订阅/手动源占用而未导入的 M3U，其 name/epg/lastSync 不得被本订阅覆盖
