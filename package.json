@@ -1,6 +1,6 @@
 {
   "name": "libretv",
-  "version": "2.13.0",
+  "version": "2.14.0",
   "private": true,
   "description": "免费在线视频搜索与观看平台（Next.js 重构版）",
   "license": "AGPL-3.0-or-later",
