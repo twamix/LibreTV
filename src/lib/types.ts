@@ -96,6 +96,10 @@ export interface AuthStatusResponse {
   /** 当前会话是否已验证 */
   verified: boolean;
   version: string;
+  /** 部署者是否配置了 ADULT_PASSWORD（决定是否展示成人解锁密码框） */
+  adultConfigured: boolean;
+  /** 当前浏览器是否已解锁成人内容源 */
+  adultUnlocked: boolean;
   /** 部署者通过 DEFAULT_SOURCES 环境变量预置的采集站（未配置时为空数组） */
   defaultSources: SourceConfig[];
   /** 部署者通过 DEFAULT_LIVE_SOURCES 环境变量预置的直播源（未配置时为空数组） */

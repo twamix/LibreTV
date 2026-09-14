@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isPasswordConfigured, sessionFromCookieHeader } from '@/lib/auth';
+import { isPasswordConfigured, sessionFromCookieHeader, adultFromCookieHeader, isAdultPasswordConfigured } from '@/lib/auth';
 import { getEnvSources } from '@/lib/env-sources';
 import { getEnvLiveSources } from '@/lib/env-live-sources';
 import { getEnvSubscriptions } from '@/lib/env-subscriptions';
@@ -10,9 +10,13 @@ export const runtime = 'nodejs';
 export async function GET(req: Request) {
   const passwordRequired = isPasswordConfigured();
   const verified = passwordRequired && sessionFromCookieHeader(req.headers.get('cookie'));
+  const adultConfigured = isAdultPasswordConfigured();
   return NextResponse.json({
     passwordRequired,
     verified,
+    // 成人内容源是否配置解锁密码、当前浏览器是否已解锁
+    adultConfigured,
+    adultUnlocked: adultConfigured && adultFromCookieHeader(req.headers.get('cookie')),
     // 构建时由 next.config.ts 从 package.json 注入
     version: process.env.APP_VERSION || 'dev',
     // 部署者通过 DEFAULT_SOURCES 预置的采集站

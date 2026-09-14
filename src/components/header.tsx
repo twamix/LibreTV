@@ -49,9 +49,6 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
             <HeaderLink href="/live" active={pathname === '/live'}>
               直播
             </HeaderLink>
-            <HeaderLink href="/about" active={pathname === '/about'}>
-              关于
-            </HeaderLink>
             <ThemeToggle />
             <IconButton label="观看历史" onClick={() => setHistoryOpen(true)}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

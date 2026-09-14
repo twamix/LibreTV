@@ -33,6 +33,12 @@ export function Providers({ children }: { children: ReactNode }) {
       })
       .then((r) => (r && r.ok ? r.json() : null))
       .then((d) => {
+        if (d && typeof d.adultConfigured === 'boolean') {
+          useAppStore.getState().setAdultConfigured(d.adultConfigured);
+        }
+        if (d && typeof d.adultUnlocked === 'boolean') {
+          useAppStore.getState().setAdultUnlocked(d.adultUnlocked);
+        }
         if (d && Array.isArray(d.defaultSources)) {
           useAppStore.getState().setEnvSources(d.defaultSources);
         }

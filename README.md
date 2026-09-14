@@ -86,6 +86,7 @@ PASSWORD=your-password npm start   # 监听 8080
 | `60S_API_BASE` | 否 | 影视榜单推荐源（60s API）实例地址，默认官方公共实例 `https://60s.viki.moe`；有限流，高频使用可[自部署](https://github.com/vikiboss/60s) |
 | `DEFAULT_LIVE_SOURCES` | 否 | 预置直播源（M3U 订阅），JSON 数组：`[{"name":"源名","url":"https://.../list.m3u","epg":"https://.../epg.xml.gz"}]`，`epg` 为可选的 XMLTV 节目单地址 |
 | `DEFAULT_SUBSCRIPTIONS` | 否 | 预置数据源订阅（LibreTV-SourceList JSON 链接），JSON 数组：`["https://.../sources.json", {"url":"https://.../list.json","name":"名称"}]`。首次访问自动导入点播源与直播源，之后每 24h 静默刷新；用户删除后不再自动加回 |
+| `ADULT_PASSWORD` | 否 | 成人内容源解锁密码。在「设置 → 点播源」底部输入该密码后才可勾选/启用标记为 (18+) 的成人源；由部署者在此变量设置，未设置时该功能不出现 |
 | `LIVE_ALLOW_PRIVATE` | 否 | 设为 `1` 时允许直播流代理访问内网/保留地址（自建 IPTV 场景），默认关闭以维持 SSRF 防护 |
 | `DEBUG` | 否 | 调试日志 |
 

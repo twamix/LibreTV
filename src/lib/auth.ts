@@ -10,6 +10,8 @@ import crypto from 'node:crypto';
  */
 
 export const SESSION_COOKIE = 'ltv_session';
+/** 成人内容源解锁 cookie（独立于登录会话，管理员可单独下发） */
+export const ADULT_COOKIE = 'ltv_adult';
 const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 天
 
 export function getPassword(): string {
@@ -63,17 +65,42 @@ export function checkPassword(input: string): boolean {
 
 /** 从请求 Cookie 中解析会话 */
 export function sessionFromCookieHeader(cookieHeader: string | null): boolean {
+  return verifiedCookieByName(cookieHeader, SESSION_COOKIE);
+}
+
+/** 从请求 Cookie 中解析成人内容解锁状态 */
+export function adultFromCookieHeader(cookieHeader: string | null): boolean {
+  return verifiedCookieByName(cookieHeader, ADULT_COOKIE);
+}
+
+function verifiedCookieByName(cookieHeader: string | null, name: string): boolean {
   if (!cookieHeader) return false;
   const cookies = cookieHeader.split(';');
   for (const c of cookies) {
     const eq = c.indexOf('=');
     if (eq === -1) continue;
-    const name = c.slice(0, eq).trim();
-    if (name === SESSION_COOKIE) {
+    const key = c.slice(0, eq).trim();
+    if (key === name) {
       return verifySession(decodeURIComponent(c.slice(eq + 1).trim()));
     }
   }
   return false;
+}
+
+// —— 成人内容源解锁 ——
+
+/** 部署者是否设置了 ADULT_PASSWORD（决定前端是否展示成人解锁密码框） */
+export function isAdultPasswordConfigured(): boolean {
+  return (process.env.ADULT_PASSWORD || '').length > 0;
+}
+
+/** 恒定时间比较成人解锁密码（比较 sha256 摘要避免长度泄漏） */
+export function checkAdultPassword(input: string): boolean {
+  const password = process.env.ADULT_PASSWORD || '';
+  if (!password) return false;
+  const a = crypto.createHash('sha256').update(input).digest();
+  const b = crypto.createHash('sha256').update(password).digest();
+  return crypto.timingSafeEqual(a, b);
 }
 
 // —— 登录速率限制（内存实现，单实例部署足够；多实例可换 Redis） ——

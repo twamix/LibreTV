@@ -24,6 +24,8 @@ services:
       # - DEFAULT_LIVE_SOURCES=[{"name":"示例直播源","url":"https://example.com/list.m3u","epg":"https://example.com/epg.xml.gz"}]
       # 可选：预置数据源订阅（SourceList JSON 链接，一次下发点播源 + 直播源）
       # - DEFAULT_SUBSCRIPTIONS=["https://example.com/sources.json"]
+      # 可选：成人内容源解锁密码（设置 → 点播源 底部输入后可启用 18+ 源；不设置则无此功能）
+      # - ADULT_PASSWORD=change-me
       # 可选：自建内网 IPTV 放行（对拉列表、测活、拉流三个阶段同时生效，默认关闭以维持 SSRF 防护）
       # - LIVE_ALLOW_PRIVATE=1
       # 可选：代理上游请求超时（毫秒）与重试次数

@@ -80,6 +80,20 @@ export const api = {
 
   logout: () => request<{ success: boolean }>('/api/auth', { method: 'DELETE' }),
 
+  /** 成人内容源解锁状态（部署者是否配置密码、当前浏览器是否已解锁） */
+  adultStatus: () => request<{ configured: boolean; unlocked: boolean }>('/api/adult'),
+
+  /** 用 ADULT_PASSWORD 解锁成人内容源（密码错误返回 403，仅设置在设置内提示，不触发登录框） */
+  adultUnlock: (password: string) =>
+    request<{ ok: boolean }>('/api/adult', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    }),
+
+  /** 锁定成人内容源 */
+  adultLock: () => request<{ ok: boolean }>('/api/adult', { method: 'DELETE' }),
+
   /**
    * 聚合搜索。传入 onSource 时走 /api/search?stream=1 的 NDJSON 流：
    * 每个源结算立即回调（健康源结果不再等坏源超时），最终以聚合结果 resolve。

@@ -16,7 +16,7 @@ export interface AppSettings {
   yellowFilter: boolean;
   adFilter: boolean;
   doubanEnabled: boolean;
-  /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API） */
+  /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API），默认豆瓣 */
   recommendSource: 'douban' | 'bangumi' | 'hot-list';
   autoplayNext: boolean;
   imageProxyMode: 'direct' | 'proxy' | 'custom';
@@ -133,6 +133,13 @@ interface AppState extends AppSettings {
   sourceHealth: Record<string, SourceHealthEntry>;
   /** 已出现过的 env 预置订阅 URL（持久化：用户删除后不再被自动加回） */
   envSubsSeen: string[];
+  /**
+   * 成人内容源是否已解锁（会话级，仅内存态）。
+   * 真实状态以服务端 ltv_adult cookie 为准，页面加载时经 /api/status 核对后写入。
+   */
+  adultUnlocked: boolean;
+  /** 部署者是否配置了 ADULT_PASSWORD（决定设置页是否展示成人解锁密码框） */
+  adultConfigured: boolean;
   addCustomApi: (api: Omit<SourceConfig, 'key'> & { key?: string }) => void;
   updateCustomApi: (key: string, patch: Partial<SourceConfig>) => void;
   removeCustomApi: (key: string) => void;
@@ -170,6 +177,8 @@ interface AppState extends AppSettings {
   /** 清除单个源的健康度记录（手动恢复入口） */
   clearSourceHealth: (key: string) => void;
   markEnvSubsSeen: (urls: string[]) => void;
+  setAdultUnlocked: (v: boolean) => void;
+  setAdultConfigured: (v: boolean) => void;
   updateSettings: (patch: Partial<Omit<AppSettings, 'customAPIs' | 'selectedKeys'>>) => void;
 }
 
@@ -205,16 +214,18 @@ export const useAppStore = create<AppState>()(
       yellowFilter: true,
       adFilter: true,
       doubanEnabled: true,
-      recommendSource: 'hot-list',
+      recommendSource: 'douban',
       autoplayNext: true,
       imageProxyMode: 'proxy',
       customImageProxy: '',
+      adultUnlocked: false,
+      adultConfigured: false,
 
       addCustomApi: (api) => {
         const list = get().customAPIs;
         const entry: SourceConfig = { ...api, key: api.key || nextCustomKey(list) };
-        // 成人内容过滤开启时，成人源默认不勾选（用户可在关闭过滤后手动勾选）
-        const selectable = !(entry.isAdult && get().yellowFilter);
+        // 成人内容过滤开启或未解锁成人源时，成人源默认不勾选（解锁/关闭过滤后可手动勾选）
+        const selectable = !(entry.isAdult && (get().yellowFilter || !get().adultUnlocked));
         set({
           customAPIs: [...list, entry],
           selectedKeys: selectable ? [...get().selectedKeys, entry.key] : get().selectedKeys,
@@ -222,8 +233,8 @@ export const useAppStore = create<AppState>()(
       },
 
       updateCustomApi: (key, patch) => {
-        // 源被标记为成人内容且过滤开启时，同步取消勾选
-        const drop = patch.isAdult === true && get().yellowFilter;
+        // 源被标记为成人内容且过滤开启或未解锁时，同步取消勾选
+        const drop = patch.isAdult === true && (get().yellowFilter || !get().adultUnlocked);
         set({
           customAPIs: get().customAPIs.map((a) => (a.key === key ? { ...a, ...patch } : a)),
           selectedKeys: drop ? get().selectedKeys.filter((k) => k !== key) : get().selectedKeys,
@@ -243,9 +254,9 @@ export const useAppStore = create<AppState>()(
           set({ selectedKeys: cur.filter((k) => k !== key) });
           return;
         }
-        // 成人内容过滤开启时不允许勾选成人源
+        // 成人内容过滤开启或未解锁时不允许勾选成人源
         const src = [...get().customAPIs, ...get().envSources].find((a) => a.key === key);
-        if (src?.isAdult && get().yellowFilter) return;
+        if (src?.isAdult && (get().yellowFilter || !get().adultUnlocked)) return;
         set({ selectedKeys: [...cur, key] });
       },
 
@@ -255,10 +266,10 @@ export const useAppStore = create<AppState>()(
         // 预置源首次出现时自动勾选（开箱即搜）；用户此后取消勾选不会被反复勾回
         const seen = new Set(get().envKeysSeen);
         const freshKeys = list.map((s) => s.key).filter((k) => !seen.has(k));
-        // 成人内容过滤开启时，成人预置源不自动勾选
+        // 成人内容过滤开启或未解锁时，成人预置源不自动勾选
         const toSelect = freshKeys.filter((k) => {
           const src = list.find((s) => s.key === k);
-          return !src?.isAdult || !get().yellowFilter;
+          return !src?.isAdult || (!get().yellowFilter && get().adultUnlocked);
         });
         set({
           envSources: list,
@@ -316,11 +327,11 @@ export const useAppStore = create<AppState>()(
           ...s,
           key: `${prefix}_${i}`,
         }));
-        // 新源自动勾选（成人过滤开启时跳过成人源），已有源维持原勾选状态
+        // 新源自动勾选（过滤开启或未解锁时跳过成人源），已有源维持原勾选状态
         const toSelect = incoming
           .filter((s) => {
             const u = s.url.replace(/\/+$/, '');
-            return prevUrlSet.has(u) ? prevSelectedUrls.has(u) : !s.isAdult || !get().yellowFilter;
+            return prevUrlSet.has(u) ? prevSelectedUrls.has(u) : !s.isAdult || (!get().yellowFilter && get().adultUnlocked);
           })
           .map((s) => s.key);
         set({
@@ -491,6 +502,10 @@ export const useAppStore = create<AppState>()(
         for (const u of urls) seen.add(u);
         set({ envSubsSeen: [...seen] });
       },
+
+      setAdultUnlocked: (v) => set({ adultUnlocked: v }),
+
+      setAdultConfigured: (v) => set({ adultConfigured: v }),
 
       updateSettings: (patch) => {
         // 打开成人内容过滤时，同步取消勾选所有成人源，避免两者并存
