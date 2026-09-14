@@ -13,7 +13,6 @@ import type { SearchResultItem, SourceSearchOutcome } from '@/lib/types';
 import { addSearchHistory, db, removeSearchHistory } from '@/lib/db';
 import { cn, validateSourceUrl } from '@/lib/utils';
 import { useToast } from '@/components/toast';
-import { useAuth } from '@/components/auth';
 
 /**
  * 首页：搜索（URL ?s= 驱动，可后退/分享）+ 豆瓣推荐。
@@ -31,7 +30,6 @@ function HomeContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { toast } = useToast();
-  const { version } = useAuth();
   const urlQuery = searchParams.get('s') || '';
   const store = useAppStore();
   const [input, setInput] = useState(urlQuery);
@@ -149,10 +147,10 @@ function HomeContent() {
         <section className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-10 mb-14')}>
           {!urlQuery && (
             <header className="text-center mb-6">
-              <h1 className="text-4xl sm:text-5xl font-bold brand-gradient">LibreTV</h1>
+              <h1 className="text-4xl sm:text-5xl font-bold brand-gradient">TV</h1>
             </header>
           )}
-          {urlQuery && <h1 className="sr-only">LibreTV 视频搜索</h1>}
+          {urlQuery && <h1 className="sr-only">TV 视频搜索</h1>}
           <form
             className="w-full max-w-2xl flex gap-2"
             onSubmit={(e) => {
@@ -299,15 +297,6 @@ function HomeContent() {
 
       <footer className="border-t border-line py-4">
         <p className="text-center text-xs text-faint">
-          <a
-            href="https://github.com/LibreSpark/LibreTV"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-accent"
-          >
-            LibreTV
-          </a>
-          {version ? ` v${version} · ` : ' '}
           数据来源为第三方公开接口，本站不存储任何视频文件
         </p>
       </footer>
@@ -337,7 +326,7 @@ function NoSourceGuide({ hasSources = false }: { hasSources?: boolean }) {
           <>点击右上角「设置」，勾选要参与搜索的点播源后重新搜索。</>
         ) : (
           <>
-            LibreTV 不内置任何采集站。点击右上角「设置 → 添加 API」，填入一个
+            TV 不内置任何采集站。点击右上角「设置 → 添加 API」，填入一个
             Apple CMS 采集站地址（如 <code className="text-accent text-xs">https://example.com/api.php/provide/vod</code>），
             勾选后即可开始搜索。
           </>

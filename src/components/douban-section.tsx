@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
@@ -11,6 +11,21 @@ import { DoubanCard } from './video-card';
 const MOVIE_TAGS = ['热门', '最新', '经典', '豆瓣高分', '冷门佳片', '华语', '欧美', '韩国', '日本', '动画'];
 const TV_TAGS = ['热门', '美剧', '英剧', '韩剧', '日剧', '国产剧', '港剧', '日本动画', '综艺', '纪录片'];
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+
+/** 与下方响应式 grid 断点一致：<640 → 3 列 / ≥640 → 4 列 / ≥768 → 6 列 / ≥1024 → 8 列 */
+function useGridCols() {
+  const [cols, setCols] = useState(8);
+  useEffect(() => {
+    const update = () => {
+      const w = window.innerWidth;
+      setCols(w >= 1024 ? 8 : w >= 768 ? 6 : w >= 640 ? 4 : 3);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return cols;
+}
 
 /** 首页推荐区：数据源由设置决定（豆瓣热门 / Bangumi 新番放送 / 影视热榜），二选一展示 */
 export function RecommendSection({ onPick }: { onPick: (title: string) => void }) {
@@ -27,7 +42,10 @@ export function RecommendSection({ onPick }: { onPick: (title: string) => void }
 function DoubanView({ onPick }: { onPick: (title: string) => void }) {
   const [type, setType] = useState<'movie' | 'tv'>('movie');
   const [tag, setTag] = useState('热门');
-  const [visibleCount, setVisibleCount] = useState(25);
+  const cols = useGridCols();
+  // 默认展示两行（列数 × 2），点「加载更多」后不再随视口收拢
+  const [expanded, setExpanded] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(cols * 2);
 
   const query = useQuery({
     queryKey: ['douban', type, tag],
@@ -38,11 +56,17 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
   const items = query.data?.items ?? [];
   const shown = items.slice(0, visibleCount);
 
+  // 列数随视口变化（旋转/缩放）时，未展开状态下保持“两行”
+  useEffect(() => {
+    if (!expanded) setVisibleCount(cols * 2);
+  }, [cols, expanded]);
+
   const switchType = (t: 'movie' | 'tv') => {
     if (t === type) return;
     setType(t);
     setTag(t === 'movie' ? '热门' : '热门');
-    setVisibleCount(25);
+    setExpanded(false);
+    setVisibleCount(cols * 2);
   };
 
   return (
@@ -70,7 +94,8 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
             )}
             onClick={() => {
               setTag(t);
-              setVisibleCount(25);
+              setExpanded(false);
+              setVisibleCount(cols * 2);
             }}
           >
             {t}
@@ -91,7 +116,13 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
           </div>
           {visibleCount < items.length && (
             <div className="text-center mt-4">
-              <button className="btn-ghost" onClick={() => setVisibleCount((v) => v + 25)}>
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setExpanded(true);
+                  setVisibleCount((v) => v + 25);
+                }}
+              >
                 加载更多
               </button>
             </div>
