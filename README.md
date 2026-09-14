@@ -37,7 +37,7 @@ docker compose up -d --build
 ```yaml
 services:
   libretv:
-    image: ghcr.io/librespark/libretv:latest
+    image: ghcr.io/twamix/libretv:latest
     container_name: libretv
     restart: unless-stopped
     ports:
@@ -59,9 +59,9 @@ docker compose pull && docker compose up -d
 
 > ⚠️ **生产部署必须通过 HTTPS 访问**（localhost 除外）：生产模式下会话 cookie 带 `Secure` 标记，浏览器只在 HTTPS（或 localhost）下保存它。因此用 `http://服务器IP:端口` 访问时，会出现"密码正确却无法登录"的现象——登录请求实际成功，但 cookie 被浏览器丢弃。请通过反向代理（Nginx / Caddy / Traefik）或 Cloudflare 等为站点套上 TLS 后再对外提供服务；本地开发用 `localhost` 不受影响。
 
-镜像发布在 GHCR：`ghcr.io/librespark/libretv`（`latest` / `主.次` / 完整版本号三个 tag，
+镜像发布在 GHCR：`ghcr.io/twamix/libretv`（`latest` / `主.次` / 完整版本号三个 tag，
 `linux/amd64` 与 `linux/arm64` 双架构）。需要固定版本时在 `.env` 中设置
-`LIBRETV_IMAGE=ghcr.io/librespark/libretv:2.0.1`。
+`LIBRETV_IMAGE=ghcr.io/twamix/libretv:2.0.1`。
 
 > 版本号以 `package.json` 为单一来源，部署后可用 `/api/status` 返回的 `version` 字段核对。详见[部署文档](https://github.com/bestZwei/LibreTV-Next/wiki/Deployment)。
 
@@ -159,7 +159,7 @@ npm version patch       # 或 minor / major；会更新 package.json 并打 git 
 git push && git push --tags
 ```
 
-CI 校验通过后自动构建并推送 `ghcr.io/librespark/libretv:<版本>`（详见[部署文档](https://github.com/bestZwei/LibreTV-Next/wiki/Deployment)）。
+CI 校验通过后自动构建并推送 `ghcr.io/twamix/libretv:<版本>`（详见[部署文档](https://github.com/bestZwei/LibreTV-Next/wiki/Deployment)）。
 
 ## 安全说明
 
@@ -182,7 +182,7 @@ CI 校验通过后自动构建并推送 `ghcr.io/librespark/libretv:<版本>`（
 | [MoonCakeTV](https://github.com/MoonCakeTV/MoonCakeTV) | 影视聚合搜索站（Next.js），文件存储、一键脚本部署 |
 | [OrangeTV](https://github.com/djteang/OrangeTV) | 跨平台影视聚合播放器（Next.js），Kvrocks/Redis/Upstash 多存储与多端同步 |
 
-> 旧版 LibreTV（静态 HTML + Express）完整代码见 [backup-2025 分支](https://github.com/LibreSpark/LibreTV/tree/backup-2025)。
+> 旧版 LibreTV（静态 HTML + Express）完整代码见 [backup-2025 分支](https://github.com/twamix/LibreTV/tree/backup-2025)。
 
 ## 免责声明
 
