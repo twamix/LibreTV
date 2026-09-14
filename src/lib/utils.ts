@@ -58,6 +58,29 @@ export function validateSourceUrl(url: string): boolean {
   return /^https?:\/\/.+/.test(url);
 }
 
+/** 是否为豆瓣图片域名（doubanio.com / douban.com 及子域），用于仅在豆瓣封面启用镜像回退 */
+export function isDoubanImageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const h = new URL(url).hostname.toLowerCase();
+    return h === 'doubanio.com' || h.endsWith('.doubanio.com') || h === 'douban.com' || h.endsWith('.douban.com');
+  } catch {
+    return false;
+  }
+}
+
+/** 豆瓣封面镜像地址（cmliussss 方案）：将 host 整体替换到镜像域，路径与查询保留 */
+export function doubanImageMirror(url: string, domain: 'net' | 'com'): string {
+  try {
+    const u = new URL(url);
+    u.protocol = 'https:';
+    u.hostname = `img.doubanio.cmliussss.${domain}`;
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** 为分享链接等场景构造观看页 URL */
 export function buildWatchUrl(params: {
   sourceKey: string;

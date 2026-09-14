@@ -87,6 +87,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 登录前以 401 失败的查询（如豆瓣推荐）需要重新拉取
     queryClient.invalidateQueries();
     toast('验证成功', 'success');
+    // 通知 Providers 补跑预置点播源测速自动勾选（登录前探活整体 401，未标记已处理）
+    window.dispatchEvent(new CustomEvent('libretv:authed'));
   }, [toast, queryClient]);
 
   return (

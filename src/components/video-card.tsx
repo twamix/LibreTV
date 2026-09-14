@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { SearchResultItem } from '@/lib/types';
-import { buildImageUrl } from '@/lib/utils';
+import { buildImageUrl, doubanImageMirror, isDoubanImageUrl } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 
@@ -263,13 +263,31 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
   );
 }
 
+/** 豆瓣封面逐级回退：内置代理 → cmliussss.net 镜像 → cmliussss.com 镜像 → 占位图。
+ *  服务端代理已自带镜像候选链；此客户端兜底覆盖“服务器够不着镜像、但用户浏览器能直连”的场景。 */
+function useDoubanCoverFallback(cover: string, mode: 'direct' | 'proxy' | 'custom', customTemplate: string) {
+  const candidates = useMemo(() => {
+    const base = buildImageUrl(cover, mode, customTemplate);
+    if (!base) return [];
+    if (!isDoubanImageUrl(cover)) return [base];
+    const mirrors: string[] = [];
+    const net = doubanImageMirror(cover, 'net');
+    const com = doubanImageMirror(cover, 'com');
+    if (net !== base) mirrors.push(net);
+    if (com !== base && com !== net) mirrors.push(com);
+    return [base, ...mirrors];
+  }, [cover, mode, customTemplate]);
+  const [idx, setIdx] = useState(0);
+  useEffect(() => setIdx(0), [candidates]);
+  const src = idx < candidates.length ? candidates[idx] : undefined;
+  return { src, onError: () => setIdx((i) => i + 1) };
+}
+
 /** 豆瓣推荐卡片（无来源徽章，点击直接搜索） */
 export function DoubanCard({ item, onClick }: { item: { title: string; cover: string; rating?: string }; onClick: () => void }) {
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
-  const [imgFailed, setImgFailed] = useState(false);
-  const primary = buildImageUrl(item.cover, imageProxyMode, customImageProxy);
-  useEffect(() => setImgFailed(false), [primary]);
+  const { src, onError } = useDoubanCoverFallback(item.cover, imageProxyMode, customImageProxy);
 
   return (
     <div
@@ -282,14 +300,15 @@ export function DoubanCard({ item, onClick }: { item: { title: string; cover: st
       }}
     >
       <div className="relative aspect-[2/3] bg-chip">
-        {primary && !imgFailed ? (
+        {src ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={primary}
+            src={src}
             alt={item.title}
             className="w-full h-full object-cover"
             loading="lazy"
-            onError={() => setImgFailed(true)}
+            referrerPolicy="no-referrer"
+            onError={onError}
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center bg-chip">

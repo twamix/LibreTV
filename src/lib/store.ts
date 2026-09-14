@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { SourceConfig, LiveSourceConfig, SourceSearchOutcome } from './types';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
-import { api } from './client-api';
+import { api, ApiError } from './client-api';
 
 /**
  * 全局设置（zustand + localStorage 持久化）。
@@ -114,6 +114,7 @@ interface AppState extends AppSettings {
   envSources: SourceConfig[];
   /** 已向用户展示过并自动勾选过的预置源 key（持久化：用户取消勾选后不再反复勾上） */
   envKeysSeen: string[];
+  autoSelectRun: boolean;
   subscriptions: SourceSubscription[];
   /** —— 直播模块 —— */
   /** 部署者通过 DEFAULT_LIVE_SOURCES 预置的直播源（服务端下发，不持久化） */
@@ -147,6 +148,8 @@ interface AppState extends AppSettings {
   toggleSourceSelected: (key: string) => void;
   setSelectedKeys: (keys: string[]) => void;
   setEnvSources: (list: SourceConfig[]) => string[];
+  markEnvSeen: (keys: string[]) => void;
+  markAutoSelectRun: () => void;
   addSubscription: (url: string, name?: string) => void;
   removeSubscription: (url: string) => void;
   markSubscriptionSynced: (url: string, name?: string) => void;
@@ -201,6 +204,7 @@ export const useAppStore = create<AppState>()(
       customAPIs: [],
       envSources: [],
       envKeysSeen: [],
+      autoSelectRun: false,
       subscriptions: [],
       liveEnvSources: [],
       liveEnvKeysSeen: [],
@@ -264,15 +268,24 @@ export const useAppStore = create<AppState>()(
       setSelectedKeys: (keys) => set({ selectedKeys: keys }),
 
       setEnvSources: (list) => {
-        // 预置源首次出现时不做全量勾选：由调用方经 autoSelectFastest 按实测耗时勾选最低的 N 个
+        // 预置源首次出现时不做全量勾选：由调用方经 autoSelectFastest 按实测耗时勾选最低的 N 个。
+        // 不在此处写 envKeysSeen——登录前探活会 401，须等登录后真正跑完再标记，否则永不重试。
         const seen = new Set(get().envKeysSeen);
         const freshKeys = list.map((s) => s.key).filter((k) => !seen.has(k));
-        set({
-          envSources: list,
-          envKeysSeen: [...get().envKeysSeen, ...freshKeys],
-        });
+        set({ envSources: list });
         return freshKeys;
       },
+
+      markEnvSeen: (keys) => {
+        const envKeys = keys.filter((k) => k.startsWith('env_'));
+        if (envKeys.length === 0) return;
+        const seen = new Set(get().envKeysSeen);
+        const added = envKeys.filter((k) => !seen.has(k));
+        if (added.length === 0) return;
+        set({ envKeysSeen: [...get().envKeysSeen, ...added] });
+      },
+
+      markAutoSelectRun: () => set({ autoSelectRun: true }),
 
       addSubscription: (url, name) => {
         if (get().subscriptions.some((s) => s.url === url)) return;
@@ -545,6 +558,7 @@ export const useAppStore = create<AppState>()(
         customAPIs: s.customAPIs,
         selectedKeys: s.selectedKeys,
         envKeysSeen: s.envKeysSeen,
+        autoSelectRun: s.autoSelectRun,
         subscriptions: s.subscriptions,
         liveEnvKeysSeen: s.liveEnvKeysSeen,
         liveSubscriptions: s.liveSubscriptions,
@@ -634,8 +648,13 @@ const AUTO_SELECT_CONCURRENCY = 5;
  * 对候选点播源做探活测速，自动勾选耗时最低的 N 个（默认 6）。
  * 已勾选、被过滤/未解锁的成人源排除在候选外；测速失败或超时的源跳过，
  * 因此源数量不足 N 时勾选到几个算几个。用户的既有勾选保持不变。
+ *
+ * 会话未就绪（未登录 / 服务器未配置密码）时探活会整体 401/503：此时中止且
+ * **不标记已处理**，由调用方在登录成功后（libretv:authed）补跑；
+ * 登录态下跑完一轮（无论勾选几个）即调用 markEnvSeen 标记，避免每次打开都重测。
  */
 export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SELECT_FASTEST_TOP): Promise<void> {
+  if (candidateKeys.length === 0) return;
   const state = useAppStore.getState();
   const all = [...state.customAPIs, ...state.envSources];
   const candidates = candidateKeys
@@ -646,27 +665,43 @@ export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SEL
         !state.selectedKeys.includes(s.key) &&
         !(s.isAdult && (state.yellowFilter || !state.adultUnlocked))
     );
-  if (candidates.length === 0) return;
+  // 候选为空（全部已勾选 / 成人源被过滤或未解锁）：无需测速，直接标记为已处理
+  if (candidates.length === 0) {
+    useAppStore.getState().markEnvSeen(candidateKeys);
+    return;
+  }
 
   const results: { key: string; ms: number }[] = [];
   const queue = [...candidates];
+  let authReady = true;
   const workers = Array.from({ length: AUTO_SELECT_CONCURRENCY }, async () => {
     for (;;) {
       const src = queue.shift();
-      if (!src) break;
+      if (!src || !authReady) break;
       try {
         const r = await api.testSource(src.url);
         if (r.ok && r.ms > 0) results.push({ key: src.key, ms: r.ms });
-      } catch {
-        // 单个源测速失败不影响其余候选
+      } catch (err) {
+        if (err instanceof ApiError && (err.status === 401 || err.status === 503)) {
+          // 会话未就绪：整体中止，等登录后补跑（不标记已处理）
+          authReady = false;
+          break;
+        }
+        // 单个源测速失败（源不可达等）不影响其余候选
       }
     }
   });
   await Promise.all(workers);
+  if (!authReady) return;
+  // 记录“测速自动勾选已在本会话跑出结果”，供 Providers 区分旧版本遗留的 seen 标记
+  useAppStore.getState().markAutoSelectRun();
 
-  if (results.length === 0) return;
-  results.sort((a, b) => a.ms - b.ms);
-  const keys = results.slice(0, topN).map((r) => r.key);
-  const cur = useAppStore.getState().selectedKeys;
-  useAppStore.getState().setSelectedKeys([...new Set([...cur, ...keys])]);
+  if (results.length > 0) {
+    results.sort((a, b) => a.ms - b.ms);
+    const keys = results.slice(0, topN).map((r) => r.key);
+    const cur = useAppStore.getState().selectedKeys;
+    useAppStore.getState().setSelectedKeys([...new Set([...cur, ...keys])]);
+  }
+  // 本轮已做出决定（勾选 top N / 全部测速失败）——标记已处理，下次不再重测
+  useAppStore.getState().markEnvSeen(candidateKeys);
 }

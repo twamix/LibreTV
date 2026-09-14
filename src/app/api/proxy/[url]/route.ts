@@ -57,7 +57,7 @@ function isDoubanHost(host: string): boolean {
 
 /**
  * 未登录即可代理的图片域白名单（精确后缀匹配，防 `evil-bgm.tv` 类绕过）：
- * 豆瓣封面需要 Referer 伪装；热榜 cover_proxy 镜像与 Bangumi 封面
+ * 豆瓣封面需要 Referer 伪装；cmliussss 镜像、热榜 cover_proxy 镜像与 Bangumi 封面
  * 均为公开图片 CDN，无 Referer 校验，仅需防开放代理滥用。
  */
 function isAnonymousImageHost(host: string): boolean {
@@ -65,6 +65,8 @@ function isAnonymousImageHost(host: string): boolean {
   return (
     isDoubanHost(h) ||
     h === 'doubanio.viki.moe' || h.endsWith('.doubanio.viki.moe') ||
+    h === 'doubanio.cmliussss.net' || h.endsWith('.doubanio.cmliussss.net') ||
+    h === 'doubanio.cmliussss.com' || h.endsWith('.doubanio.cmliussss.com') ||
     h === 'bgm.tv' || h.endsWith('.bgm.tv')
   );
 }
@@ -76,6 +78,26 @@ function looksLikeImageUrl(target: string): boolean {
     try { return new URL(target).hostname; } catch { return ''; }
   })();
   return isAnonymousImageHost(host);
+}
+
+/**
+ * 豆瓣图片候选链（参考 LibreTV 前身 v 项目的图片获取方案）：
+ * 原址 → imgN.doubanio.com 归一化为 img3 → cmliussss.net / .com 镜像。
+ * doubanio 直连常被反盗链拒绝（403/418 或 HTML 挑战页），cmliussss 镜像无需
+ * Referer 即可稳定回源；仅在目标确为 doubanio 时启用，bgm/viki 等单一直连。
+ */
+function doubanImageCandidates(target: string): string[] {
+  const candidates = [target];
+  try {
+    const u = new URL(target);
+    if (!isDoubanHost(u.hostname)) return candidates;
+    const normalized = u.href.replace(/^https?:\/\/img\d+\.doubanio\.com/i, 'https://img3.doubanio.com');
+    if (normalized !== u.href) candidates.push(normalized);
+    const suffix = u.pathname + u.search;
+    candidates.push(`https://img.doubanio.cmliussss.net${suffix}`);
+    candidates.push(`https://img.doubanio.cmliussss.com${suffix}`);
+  } catch { /* 忽略非法 URL */ }
+  return Array.from(new Set(candidates));
 }
 
 /**
@@ -100,28 +122,46 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
     return new NextResponse('不允许访问私有/保留网络地址', { status: 403 });
   }
 
-  const headers: Record<string, string> = { 'User-Agent': UA, Accept: '*/*' };
-  try {
-    if (isDoubanHost(new URL(targetUrl).hostname)) {
-      headers.Referer = 'https://movie.douban.com/';
-    }
-  } catch { /* 忽略非法 URL */ }
-
+  // 目标为豆瓣图片时启用镜像候选链；其余目标保持原址单次直连
+  const targetHost = (() => {
+    try { return new URL(targetUrl).hostname.toLowerCase(); } catch { return ''; }
+  })();
+  const candidates = isDoubanHost(targetHost) ? doubanImageCandidates(targetUrl) : [targetUrl];
+  const isImageTarget = looksLikeImageUrl(targetUrl);
   const range = req.headers.get('range');
-  if (range) headers.Range = range;
 
   let response: Response | undefined;
   let finalUrl = targetUrl;
   let lastError: unknown = null;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+outer:
+  for (const candidate of candidates) {
+    const headers: Record<string, string> = { 'User-Agent': UA, Accept: '*/*' };
     try {
-      const result = await proxyFetch(targetUrl, { headers });
-      response = result.res;
-      finalUrl = result.finalUrl;
-      lastError = null;
-      break;
-    } catch (err) {
-      lastError = err;
+      const h = new URL(candidate).hostname.toLowerCase();
+      // cmliussss 镜像虽不校验 Referer，带上也无副作用，统一伪装成豆瓣访客
+      if (isDoubanHost(h) || h.endsWith('.cmliussss.net') || h.endsWith('.cmliussss.com')) {
+        headers.Referer = 'https://movie.douban.com/';
+      }
+    } catch { /* 忽略非法 URL */ }
+    if (range) headers.Range = range;
+
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const result = await proxyFetch(candidate, { headers });
+        // 反盗链/限流常以 HTML 挑战页回应：命中图片目标时按该候选失败处理，
+        // 不重复重试原址，直接换下一个镜像
+        const contentType = result.res.headers.get('content-type') || '';
+        if (isImageTarget && contentType.includes('text/html')) {
+          lastError = new Error('反盗链拒绝（HTML 挑战页）');
+          break;
+        }
+        response = result.res;
+        finalUrl = result.finalUrl;
+        lastError = null;
+        break outer;
+      } catch (err) {
+        lastError = err;
+      }
     }
   }
   if (!response) {

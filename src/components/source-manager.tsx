@@ -181,8 +181,6 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
             </button>
           }
         />
-        {/* 成人内容解锁入口直接内嵌在点播源中，紧凑隐蔽 */}
-        {store.adultConfigured && <AdultUnlockPanel />}
         <SourceForm
           visible={editing === '__new__'}
           onCancel={() => setEditing(null)}
@@ -217,7 +215,7 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
                           {api.isAdult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
                           {api.isAdult && adultSourceDisabled(true) && (
                             <span className="text-[10px] text-faint ml-1">
-                              {!store.adultUnlocked ? '已锁定，需在下方输入密码解锁' : '过滤开启中，需关闭后才能启用'}
+                              {!store.adultUnlocked ? '已锁定，需在订阅与配置中解锁' : '过滤开启中，需关闭后才能启用'}
                             </span>
                           )}
                           <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-chip text-faint align-middle">
@@ -414,6 +412,12 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
             />
           </div>
         </section>
+        {store.adultConfigured && (
+          <section className="mb-6 pt-5 border-t border-line">
+            <SectionTitle title="成人内容解锁" />
+            <AdultUnlockPanel />
+          </section>
+        )}
         <section className="mb-6 pt-5 border-t border-line">
           <SectionTitle title="配置" />
           <ConfigIoButtons />
@@ -425,8 +429,8 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
 }
 
 /**
- * 成人内容源解锁（内嵌在「点播源」中）。
- * 部署者设置 ADULT_PASSWORD 后展示；未解锁时成人源在列表中隐藏，
+ * 成人内容源解锁（位于「订阅与配置 → 成人内容解锁」）。
+ * 部署者设置 ADULT_PASSWORD 后展示；未解锁时成人源在点播源列表中隐藏，
  * 在此输入密码解锁后 (18+) 源才可见可用。
  */
 function AdultUnlockPanel() {
