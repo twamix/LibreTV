@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES, parseSourceListPayload } from './source-list';
+import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES, normalizeSubscriptionUrl, parseSourceListPayload } from './source-list';
 
 const vod = (url: string, extra: Record<string, unknown> = {}) => ({ name: `源 ${url}`, url, ...extra });
 const live = (url: string, extra: Record<string, unknown> = {}) => ({ name: `频道 ${url}`, url, ...extra });
@@ -135,5 +135,18 @@ describe('parseSourceListPayload', () => {
     expect(() => parseSourceListPayload({ name: '空的' })).toThrow(/格式不正确/);
     expect(() => parseSourceListPayload({ sources: [] })).toThrow(/格式不正确/);
     expect(() => parseSourceListPayload(null)).toThrow(/格式不正确/);
+  });
+});
+
+describe('normalizeSubscriptionUrl', () => {
+  it('trim + 去掉尾部斜杠', () => {
+    expect(normalizeSubscriptionUrl('  https://a.example.com/sub/  ')).toBe('https://a.example.com/sub');
+    expect(normalizeSubscriptionUrl('https://b.example.com/sub///')).toBe('https://b.example.com/sub');
+    expect(normalizeSubscriptionUrl('https://c.example.com/sub')).toBe('https://c.example.com/sub');
+  });
+
+  it('空字符串返回空串', () => {
+    expect(normalizeSubscriptionUrl('')).toBe('');
+    expect(normalizeSubscriptionUrl('   ')).toBe('');
   });
 });

@@ -162,6 +162,18 @@ export const api = {
     return request<SourceListPayload>(`/api/source-list?${sp.toString()}`);
   },
 
+  /** 把当前源列表发布到第三方粘贴板，返回可直接填入订阅框的 URL */
+  publishSourceList: (payload: {
+    name?: string;
+    sources: { name: string; url: string }[];
+    liveSources: { name: string; url: string; epg?: string }[];
+  }) =>
+    request<{ url: string; provider: string; sources: number; liveSources: number }>('/api/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+
   /** —— 直播 / IPTV —— */
 
   /** 拉取并解析 M3U 订阅；force=1 跳过服务端缓存 */

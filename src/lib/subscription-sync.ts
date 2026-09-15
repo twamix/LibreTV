@@ -1,13 +1,16 @@
 'use client';
 
 import { api } from './client-api';
+import { normalizeSubscriptionUrl } from './source-list';
 import { useAppStore, autoSelectFastest } from './store';
+import type { SubscriptionParseStats } from './types';
 
 /**
  * SourceList 订阅同步核心逻辑，供两处复用：
  * - source-manager：用户在设置抽屉中手动添加/重新同步（UI 层加 toast 反馈）；
  * - providers：部署者通过 DEFAULT_SUBSCRIPTIONS 预置的订阅，启动时自动导入与静默重同步。
  *
+ * 订阅内容由服务端自动识别格式（LibreTV-SourceList JSON 或 TVBOX 配置 JSON），
  * applySubscriptionSources / applySubscriptionLive 均按订阅前缀整体替换且保留
  * 用户勾选状态，同步失败时不调用即无副作用——旧数据自动保留。
  */
@@ -15,10 +18,15 @@ export interface SubscriptionSyncResult {
   name?: string;
   vodCount: number;
   liveCount: number;
+  /** 解析统计（识别格式、跳过与截断条目），用于导入结果提示 */
+  stats?: SubscriptionParseStats;
 }
 
-export async function syncSourceSubscription(url: string): Promise<SubscriptionSyncResult> {
-  const { name, sources, liveSources } = await api.fetchSourceList(url);
+export async function syncSourceSubscription(rawUrl: string): Promise<SubscriptionSyncResult> {
+  // 统一归一化（trim + 去尾斜杠）：与 DEFAULT_SUBSCRIPTIONS 预置地址保持同一形态，
+  // 避免同一订阅地址因尾斜杠差异被存成两条订阅
+  const url = normalizeSubscriptionUrl(rawUrl);
+  const { name, sources, liveSources, stats } = await api.fetchSourceList(url);
   if (sources.length === 0 && liveSources.length === 0) {
     throw new Error('订阅内容为空');
   }
@@ -39,7 +47,7 @@ export async function syncSourceSubscription(url: string): Promise<SubscriptionS
   }
   store.addSubscription(url, name);
   store.markSubscriptionSynced(url, name);
-  return { name, vodCount, liveCount };
+  return { name, vodCount, liveCount, stats };
 }
 
 /** 预置订阅超过该间隔未同步时，启动阶段静默刷新一次 */

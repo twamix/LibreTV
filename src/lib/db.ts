@@ -142,6 +142,12 @@ export async function clearSearchHistory(): Promise<void> {
   await db.searchHistory.clear();
 }
 
+/** 撤销「清空搜索记录」：按原时间戳回填，保持原有顺序 */
+export async function restoreSearchHistory(entries: SearchHistoryEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  await db.searchHistory.bulkPut(entries);
+}
+
 // —— 直播测活缓存（TTL 过滤由调用方负责，本层只管存取） ——
 
 export async function loadLiveProbeResults(): Promise<Record<string, LiveProbeEntry>> {

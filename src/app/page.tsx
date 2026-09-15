@@ -7,11 +7,11 @@ import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
-import { useAppStore, resolveSource, isSourceDisabled, SOURCE_DISABLE_TTL_MS } from '@/lib/store';
+import { useAppStore, resolveSource, isSourceDisabled, isInDisabledSubscription } from '@/lib/store';
 import { api } from '@/lib/client-api';
 import type { SearchResultItem, SourceSearchOutcome } from '@/lib/types';
-import { addSearchHistory, db, removeSearchHistory } from '@/lib/db';
-import { cn, validateSourceUrl } from '@/lib/utils';
+import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
+import { cn, formatDisableTtl, validateSourceUrl } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 
 /**
@@ -60,10 +60,17 @@ function HomeContent() {
         return true;
       })
       // 自动停用期内的源不参与搜索（到期自动恢复）
-      .filter((s) => !isSourceDisabled(store, s.key));
+      .filter((s) => !isSourceDisabled(store, s.key))
+      // 所属订阅被整体停用的源同样跳过（无损：各源勾选状态保留，重新启用即恢复）
+      .filter((s) => !isInDisabledSubscription(store, s.key));
   }, [store]);
   const disabledSources = useMemo(
     () => store.selectedKeys.filter((key) => isSourceDisabled(store, key)),
+    [store]
+  );
+  // 来自已关闭订阅的源：勾选状态还在，但本次搜索用不到，必须明确告知
+  const offSubscriptionSources = useMemo(
+    () => store.selectedKeys.filter((key) => !isSourceDisabled(store, key) && isInDisabledSubscription(store, key)),
     [store]
   );
 
@@ -77,8 +84,13 @@ function HomeContent() {
         // 逐源结算即更新：结果边搜边渲染，同时滚动健康度
         onSource: (outcome) => {
           setStreamedOutcomes((prev) => [...prev, outcome]);
-          for (const key of store.recordSourceHealth([outcome])) {
-            toast(`「${sourceName(key)}」连续超时/失败，已临时停用 30 分钟`, 'warning');
+          for (const ev of store.recordSourceHealth([outcome])) {
+            toast(
+              ev.permanent
+                ? `「${sourceName(ev.key)}」多次失败，已停止参与搜索，可在设置中恢复`
+                : `「${sourceName(ev.key)}」连续超时/失败，已停用 ${formatDisableTtl(ev.ttlMs ?? 0)}`,
+              'warning'
+            );
           }
         },
       });
@@ -88,10 +100,8 @@ function HomeContent() {
     staleTime: 300_000,
   });
 
-  const searchHistory = useQuery({
-    queryKey: ['searchHistory'],
-    queryFn: () => db.searchHistory.orderBy('timestamp').reverse().limit(10).toArray(),
-  });
+  // 最近搜索改为搜索框下拉（聚焦展开、按输入过滤），不再常驻首屏
+  const searchHistory = useSearchHistory(input);
 
   const runSearch = (q: string) => {
     const query = q.trim().slice(0, 100);
@@ -105,7 +115,13 @@ function HomeContent() {
       return;
     }
     router.push(`/?s=${encodeURIComponent(query)}`, { scroll: false });
-    addSearchHistory(query).catch(() => {});
+    searchHistory.record(query);
+  };
+
+  const pickHistory = (text: string) => {
+    setInput(text);
+    searchHistory.close();
+    runSearch(text);
   };
 
   const isSearching = Boolean(urlQuery) && searchQuery.isFetching && !searchQuery.data;
@@ -158,15 +174,34 @@ function HomeContent() {
               runSearch(input);
             }}
           >
-            <div className="relative flex-1">
+            <div ref={searchHistory.containerRef} className="relative flex-1">
               <input
                 ref={inputRef}
-                className="input w-full h-11 pr-10"
+                className={cn(
+                  'input w-full h-11 pr-10',
+                  // 下拉展开时：上半圆角保持，下半改为与下拉拼接的内部分隔线
+                  searchHistory.visible &&
+                    'rounded-b-none border-accent border-b-line bg-surface-raised focus:ring-0 focus:border-accent'
+                )}
                 placeholder="输入影片名称..."
                 value={input}
                 maxLength={100}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  searchHistory.resetActive();
+                }}
+                onFocus={searchHistory.onFocus}
+                onKeyDown={(e) => searchHistory.onKeyDown(e, pickHistory)}
+                role="combobox"
                 aria-label="搜索影片"
+                aria-expanded={searchHistory.visible}
+                aria-controls="home-search-history"
+                aria-autocomplete="list"
+                aria-activedescendant={
+                  searchHistory.visible && searchHistory.activeIndex >= 0
+                    ? `home-search-history-${searchHistory.activeIndex}`
+                    : undefined
+                }
               />
               {input && (
                 <button
@@ -174,6 +209,7 @@ function HomeContent() {
                   className="absolute right-2.5 top-1/2 -translate-y-1/2 text-faint hover:text-content"
                   onClick={() => {
                     setInput('');
+                    searchHistory.resetActive();
                     inputRef.current?.focus();
                   }}
                   aria-label="清空"
@@ -183,38 +219,21 @@ function HomeContent() {
                   </svg>
                 </button>
               )}
+              {searchHistory.visible && (
+                <SearchHistoryDropdown
+                  id="home-search-history"
+                  matches={searchHistory.matches}
+                  activeIndex={searchHistory.activeIndex}
+                  onPick={pickHistory}
+                  onRemove={searchHistory.remove}
+                  onClearAll={searchHistory.clearAll}
+                />
+              )}
             </div>
             <button type="submit" className="btn-primary h-11 px-5">
               搜索
             </button>
           </form>
-
-          {/* 最近搜索 */}
-          {(searchHistory.data?.length ?? 0) > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 mt-3 justify-center">
-              <span className="text-xs text-faint">最近搜索:</span>
-              {searchHistory.data!.map((h) => (
-                <span key={h.text} className="inline-flex items-center bg-card rounded-full text-xs">
-                  <button
-                    className="pl-2.5 pr-1 py-1 text-content hover:text-accent"
-                    onClick={() => {
-                      setInput(h.text);
-                      runSearch(h.text);
-                    }}
-                  >
-                    {h.text}
-                  </button>
-                  <button
-                    className="pr-2 py-1 text-faint hover:text-red-400"
-                    aria-label={`删除搜索记录 ${h.text}`}
-                    onClick={() => removeSearchHistory(h.text).then(() => searchHistory.refetch())}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
         </section>
 
         {/* 搜索结果 */}
@@ -251,9 +270,15 @@ function HomeContent() {
 
             {disabledSources.length > 0 && (
               <div className="mb-3 text-xs text-faint bg-chip rounded-lg px-3 py-2">
-                {disabledSources.length} 个源因连续超时/失败已临时停用（
-                {Math.round(SOURCE_DISABLE_TTL_MS / 60000)} 分钟后自动恢复）：
-                {disabledSources.map((key) => sourceName(key)).join('、')}
+                {disabledSources.length} 个源因连续超时/失败已暂停参与搜索（临时停用的到期自动恢复，
+                长期停用的需在设置中手动恢复）：{disabledSources.map((key) => sourceName(key)).join('、')}
+              </div>
+            )}
+
+            {offSubscriptionSources.length > 0 && (
+              <div className="mb-3 text-xs text-faint bg-chip rounded-lg px-3 py-2">
+                {offSubscriptionSources.length} 个源所属的订阅已停用，未参与本次搜索（在设置 → 数据源订阅中可重新启用）：
+                {offSubscriptionSources.map((key) => sourceName(key)).join('、')}
               </div>
             )}
 
