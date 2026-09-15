@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Drawer } from './header';
-import { isSourceDisabled, subKeyPrefix, useAppStore } from '@/lib/store';
+import { isSourceDisabled, selectAllAdultSources, reselectFastestNonAdult, subKeyPrefix, useAppStore } from '@/lib/store';
 import { useToast } from './toast';
 import { formatRelativeTime, validateSourceUrl, cn } from '@/lib/utils';
 import { exportConfig, importConfig } from '@/lib/db';
@@ -447,6 +447,8 @@ function AdultUnlockPanel() {
       store.setAdultUnlocked(true);
       // 解锁即视为允许成人内容：若过滤仍开启则一并关闭，让 (18+) 源真正可用
       if (store.yellowFilter) store.updateSettings({ yellowFilter: false });
+      // 解锁联动：全选成人源、取消所有非成人源（切到成人浏览模式）
+      selectAllAdultSources();
       setPassword('');
       toast('已解锁', 'success');
     } catch (err) {
@@ -461,6 +463,8 @@ function AdultUnlockPanel() {
       await api.adultLock();
     } catch { /* 失败也不阻塞本地锁定 */ }
     store.setAdultUnlocked(false);
+    // 锁定联动：清空勾选并重新测速，勾选耗时最低的 6 个非成人源
+    void reselectFastestNonAdult();
     toast('已锁定', 'info');
   };
 

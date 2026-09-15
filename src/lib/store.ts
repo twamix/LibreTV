@@ -646,7 +646,8 @@ const AUTO_SELECT_CONCURRENCY = 5;
 
 /**
  * 对候选点播源做探活测速，自动勾选耗时最低的 N 个（默认 6）。
- * 已勾选、被过滤/未解锁的成人源排除在候选外；测速失败或超时的源跳过，
+ * 仅限非成人源：成人源一律排除在候选外（解锁与否、是否开启过滤都不参与测速，
+ * 成人源的勾选由解锁/锁定动作显式控制）；已勾选、测速失败或超时的源跳过，
  * 因此源数量不足 N 时勾选到几个算几个。用户的既有勾选保持不变。
  *
  * 会话未就绪（未登录 / 服务器未配置密码）时探活会整体 401/503：此时中止且
@@ -662,8 +663,8 @@ export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SEL
     .filter(
       (s): s is SourceConfig =>
         !!s &&
-        !state.selectedKeys.includes(s.key) &&
-        !(s.isAdult && (state.yellowFilter || !state.adultUnlocked))
+        !s.isAdult && // 自动探活测速仅限非成人源：成人源永不因此被勾选
+        !state.selectedKeys.includes(s.key)
     );
   // 候选为空（全部已勾选 / 成人源被过滤或未解锁）：无需测速，直接标记为已处理
   if (candidates.length === 0) {
@@ -704,4 +705,32 @@ export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SEL
   }
   // 本轮已做出决定（勾选 top N / 全部测速失败）——标记已处理，下次不再重测
   useAppStore.getState().markEnvSeen(candidateKeys);
+}
+
+/** 全部成人源 key（env + custom + 订阅导入均在 customAPIs/envSources 内） */
+function allAdultKeys(state: Pick<AppState, 'customAPIs' | 'envSources'>): string[] {
+  return [...state.customAPIs, ...state.envSources].filter((s) => s.isAdult).map((s) => s.key);
+}
+
+/**
+ * 成人内容解锁成功后调用：全选所有成人源，取消所有非成人源勾选（切到成人浏览模式）。
+ * 只应在用户显式的解锁动作里调用——启动时 /api/status 同步 setAdultUnlocked 不能触发，
+ * 否则每次刷新页面都会清掉用户已勾选的非成人源。
+ */
+export function selectAllAdultSources(): void {
+  const state = useAppStore.getState();
+  state.setSelectedKeys(allAdultKeys(state));
+}
+
+/**
+ * 成人内容锁定成功后调用：清空全部勾选，对全部非成人源重新探活测速，
+ * 勾选耗时最低的 N 个（默认 6）。同样只应由用户显式的锁定动作触发。
+ */
+export async function reselectFastestNonAdult(topN = AUTO_SELECT_FASTEST_TOP): Promise<void> {
+  const state = useAppStore.getState();
+  const nonAdultKeys = [...state.customAPIs, ...state.envSources]
+    .filter((s) => !s.isAdult)
+    .map((s) => s.key);
+  state.setSelectedKeys([]);
+  if (nonAdultKeys.length > 0) await autoSelectFastest(nonAdultKeys, topN);
 }
