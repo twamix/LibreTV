@@ -1,15 +1,28 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Drawer } from './header';
-import { isSourceDisabled, selectAllAdultSources, reselectFastestNonAdult, subKeyPrefix, useAppStore } from '@/lib/store';
+import {
+  allLiveSources,
+  isSourceDisabled,
+  keyBelongsToSubscription,
+  resolveSource,
+  selectAllAdultSources,
+  reselectFastestNonAdult,
+  subKeyPrefix,
+  useAppStore,
+} from '@/lib/store';
 import { useToast } from './toast';
+import { useSourceProbe } from './use-source-probe';
 import { formatRelativeTime, validateSourceUrl, cn } from '@/lib/utils';
 import { exportConfig, importConfig } from '@/lib/db';
 import { useAuth } from './auth';
 import { api } from '@/lib/client-api';
 import { syncSourceSubscription } from '@/lib/subscription-sync';
+import { describeParseStats } from '@/lib/tvbox-parser';
 import { LiveSourceManager } from './live-source-manager';
+import type { SourceConfig } from '@/lib/types';
+import { FilterTabs, VOD_FILTERS, type VodFilter } from './filter-tabs';
 
 /**
  * 设置抽屉：顶部 Tab 分类（点播源 / 直播源 / 播放设置 / 订阅与配置），
@@ -68,20 +81,90 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
   const visibleEnv = store.envSources.filter((s) => !s.isAdult || store.adultUnlocked);
   const visibleCustom = store.customAPIs.filter((s) => !s.isAdult || store.adultUnlocked);
 
+  // —— 源列表搜索 / 筛选 / 批量操作 ——
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<VodFilter>('all');
+  const { progress, probe, cancel, isProbing } = useSourceProbe();
+
+  /** 全部可见源（预置 + 手动/订阅），仅供筛选计数与批量操作使用 */
+  const envKeys = useMemo(() => new Set(store.envSources.map((s) => s.key)), [store.envSources]);
+  const allSources = useMemo(() => [...visibleEnv, ...visibleCustom], [visibleEnv, visibleCustom]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return allSources.filter((s) => {
+      if (q && !(s.name.toLowerCase().includes(q) || s.url.toLowerCase().includes(q))) return false;
+      if (filter === 'enabled' && !(store.selectedKeys.includes(s.key) && !isSourceDisabled(store, s.key))) return false;
+      if (filter === 'disabled' && !isSourceDisabled(store, s.key)) return false;
+      const fromSub = s.key.startsWith('sub_');
+      if (filter === 'sub' && !fromSub) return false;
+      if (filter === 'manual' && (fromSub || envKeys.has(s.key))) return false;
+      return true;
+    });
+  }, [allSources, query, filter, store, envKeys]);
+
+  const enabledCount = allSources.filter(
+    (s) => store.selectedKeys.includes(s.key) && !isSourceDisabled(store, s.key)
+  ).length;
+
+  /** 当前筛选结果是否已全部勾选（用于「全选/清空」按钮文案） */
+  const allVisibleSelected = filtered.length > 0 && filtered.every((s) => store.selectedKeys.includes(s.key));
+
+  /** 全选/清空当前筛选结果；过滤开启时锁定的成人源跳过（与行内勾选框一致） */
+  const toggleAllVisible = () => {
+    if (filtered.length === 0) return;
+    const keys = filtered.map((s) => s.key);
+    if (allVisibleSelected) {
+      store.setSelectedKeys(store.selectedKeys.filter((k) => !keys.includes(k)));
+      return;
+    }
+    const eligible = filtered.filter((s) => !(s.isAdult && store.yellowFilter)).map((s) => s.key);
+    if (eligible.length < filtered.length) {
+      toast('成人内容过滤开启中（或未解锁），其下的源暂未批量勾选', 'info');
+    }
+    store.setSelectedKeys([...new Set([...store.selectedKeys, ...eligible])]);
+  };
+
+  /** 批量测活当前筛选结果；进行中再点即取消（已完成结果保留） */
+  const runBatchProbe = async () => {
+    if (isProbing) {
+      cancel();
+      return;
+    }
+    const result = await probe(filtered.map((s) => ({ key: s.key, url: s.url })));
+    if (result) {
+      toast(`测活完成：${result.ok}/${result.total} 个可用`, result.ok === result.total ? 'success' : 'info');
+    }
+  };
+
+  /** 「已停用」筛选下的批量恢复入口 */
+  const restoreAllDisabled = () => {
+    const keys = filtered.filter((s) => isSourceDisabled(store, s.key)).map((s) => s.key);
+    keys.forEach((k) => store.clearSourceHealth(k));
+    toast(`已恢复 ${keys.length} 个停用源`, 'success');
+  };
+
   /** 搜索健康度徽章：展示最近一次搜索该源的结果；被自动停用的源提供手动恢复入口 */
   const healthBadge = (key: string) => {
     const e = store.sourceHealth[key];
     if (!e) return null;
     if (isSourceDisabled(store, key)) {
-      const remainMin = Math.max(1, Math.ceil(((e.disabledUntil ?? 0) - Date.now()) / 60000));
       return (
         <span className="flex items-center gap-1 shrink-0">
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500"
-            title={`连续 ${e.failStreak} 次超时/失败，${remainMin} 分钟后自动恢复`}
-          >
-            ⏱ 已停用 {remainMin} 分
-          </span>
+          {e.permanent ? (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-500"
+              title={`已第 ${e.disableCount ?? 0} 次被自动停用，点「恢复」重新启用`}
+            >
+              ⏱ 长期停用
+            </span>
+          ) : (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500"
+              title={`连续 ${e.failStreak} 次超时/失败，${Math.max(1, Math.ceil(((e.disabledUntil ?? 0) - Date.now()) / 60000))} 分钟后自动恢复`}
+            >
+              ⏱ 已停用 {Math.max(1, Math.ceil(((e.disabledUntil ?? 0) - Date.now()) / 60000))} 分
+            </span>
+          )}
           <button
             className="text-[10px] px-1 text-muted hover:text-accent"
             aria-label="恢复此源"
@@ -193,139 +276,148 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
           <EmptySourceGuide onAdd={() => setEditing('__new__')} />
         ) : (
           <>
+            {/* 搜索 / 筛选 / 批量操作工具条 */}
+            <div className="space-y-2 mb-2.5">
+              <input
+                className="input w-full"
+                placeholder="搜索名称或地址"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="搜索点播源"
+              />
+              <div className="flex flex-wrap items-center gap-1.5">
+                <FilterTabs options={VOD_FILTERS} value={filter} onChange={setFilter} />
+                <span className="ml-auto text-[11px] text-faint">显示 {filtered.length} 个 · 已启用 {enabledCount}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button className="btn-ghost !py-1 !px-2 text-[11px]" onClick={toggleAllVisible} disabled={filtered.length === 0}>
+                  {allVisibleSelected ? '清空勾选' : '全选'}
+                </button>
+                <button className="btn-ghost !py-1 !px-2 text-[11px]" onClick={runBatchProbe} disabled={filtered.length === 0}>
+                  {isProbing && progress ? `测活中 ${progress.done}/${progress.total}` : '批量测活'}
+                </button>
+                {isProbing && (
+                  <button className="btn-ghost !py-1 !px-2 text-[11px]" onClick={cancel}>
+                    取消
+                  </button>
+                )}
+                {filter === 'disabled' && (
+                  <button className="btn-ghost !py-1 !px-2 text-[11px]" onClick={restoreAllDisabled} disabled={filtered.length === 0}>
+                    全部恢复
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* 源很多时限高内滚，避免 tab 内长滚 */}
             <div className="max-h-[50vh] overflow-y-auto scrollbar-thin pr-1">
-            {visibleEnv.length > 0 && (
-              <ul className="space-y-2 mb-2">
-                {visibleEnv.map((api) => (
-                  <li key={api.key} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-[#2563eb]"
-                        checked={store.selectedKeys.includes(api.key)}
-                        onChange={() => store.toggleSourceSelected(api.key)}
-                        disabled={adultSourceDisabled(api.isAdult)}
-                        title={adultSourceHint(api.isAdult)}
-                        aria-label={`选择 ${api.name}`}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-content truncate">
-                          {api.name}
-                          {api.isAdult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
-                          {api.isAdult && adultSourceDisabled(true) && (
-                            <span className="text-[10px] text-faint ml-1">
-                              {!store.adultUnlocked ? '已锁定，需在订阅与配置中解锁' : '过滤开启中，需关闭后才能启用'}
-                            </span>
-                          )}
-                          <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-chip text-faint align-middle">
-                            部署者预置
-                          </span>
-                        </div>
-                        <div className="text-xs text-faint truncate">{api.url}</div>
-                      </div>
-                      {healthBadge(api.key)}
-                      {testButton(api.key, api.url)}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {visibleCustom.length > 0 && (
-            <ul className="space-y-2">
-            {visibleCustom.map((api) => {
-              const fromSubscription = api.key.startsWith('sub_');
-              return (
-              <li key={api.key} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
-                {editing === api.key ? (
-                  <SourceForm
-                    visible
-                    initial={api}
-                    onCancel={() => setEditing(null)}
-                    onSubmit={(data) => {
-                      store.updateCustomApi(api.key, data);
-                      setEditing(null);
-                    }}
-                  />
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-[#2563eb]"
-                      checked={store.selectedKeys.includes(api.key)}
-                      onChange={() => store.toggleSourceSelected(api.key)}
-                      disabled={!!api.isAdult && store.yellowFilter}
-                      title={api.isAdult && store.yellowFilter ? '成人内容过滤开启中，需先关闭过滤才能启用此源' : undefined}
-                      aria-label={`选择 ${api.name}`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium text-content truncate">
-                        {api.name}
-                        {api.isAdult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
-                        {api.isAdult && store.yellowFilter && (
-                          <span className="text-[10px] text-faint ml-1">过滤开启中，需关闭后才能启用</span>
+              {filtered.length === 0 ? (
+                <p className="text-xs text-faint py-4">没有符合当前搜索或筛选条件的源</p>
+              ) : (
+                <ul className="space-y-2">
+                  {filtered.map((api) => {
+                    const isEnv = envKeys.has(api.key);
+                    const fromSubscription = api.key.startsWith('sub_');
+                    return (
+                      <li key={api.key} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
+                        {!isEnv && editing === api.key ? (
+                          <SourceForm
+                            visible
+                            initial={api}
+                            onCancel={() => setEditing(null)}
+                            onSubmit={(data) => {
+                              store.updateCustomApi(api.key, data);
+                              setEditing(null);
+                            }}
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-[#2563eb]"
+                              checked={store.selectedKeys.includes(api.key)}
+                              onChange={() => store.toggleSourceSelected(api.key)}
+                              disabled={adultSourceDisabled(api.isAdult)}
+                              title={adultSourceHint(api.isAdult)}
+                              aria-label={`选择 ${api.name}`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-content truncate">
+                                {api.name}
+                                {api.isAdult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
+                                {api.isAdult && adultSourceDisabled(true) && (
+                                  <span className="text-[10px] text-faint ml-1">
+                                    {!store.adultUnlocked ? '已锁定，需在订阅与配置中解锁' : '过滤开启中，需关闭后才能启用'}
+                                  </span>
+                                )}
+                                {isEnv ? (
+                                  <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-chip text-faint align-middle">
+                                    部署者预置
+                                  </span>
+                                ) : fromSubscription ? (
+                                  <span
+                                    className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent align-middle"
+                                    title="来自数据源订阅，重新同步时此源的名称/地址会以订阅内容为准"
+                                  >
+                                    订阅
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="text-xs text-faint truncate">{api.url}</div>
+                            </div>
+                            {healthBadge(api.key)}
+                            {testButton(api.key, api.url)}
+                            {isEnv ? null : fromSubscription ? (
+                              // 订阅源由远端列表管理：编辑会被下次同步覆盖，删除会复活，引导到订阅区操作
+                              <>
+                                <button
+                                  className="rounded-md p-1.5 text-muted/40"
+                                  aria-label="订阅源不可单独编辑"
+                                  title="该源来自订阅，编辑修改会在下次同步时被覆盖；如需调整请修改远端订阅列表后重新同步"
+                                  onClick={() => toast('订阅源以远端列表为准；请修改远端订阅内容后重新同步', 'info')}
+                                >
+                                  ✎
+                                </button>
+                                <button
+                                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-red-400"
+                                  onClick={() => {
+                                    store.removeCustomApi(api.key);
+                                    toast('已移除；注意：重新同步订阅时该源会恢复', 'info');
+                                  }}
+                                  aria-label="删除"
+                                  title="移除此源（重新同步订阅时会恢复）"
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-accent"
+                                  onClick={() => setEditing(api.key)}
+                                  aria-label="编辑"
+                                >
+                                  ✎
+                                </button>
+                                <button
+                                  className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-red-400"
+                                  onClick={() => {
+                                    const snap = store.removeCustomApi(api.key);
+                                    if (snap) toast(`已移除「${api.name}」`, 'info', { action: { label: '撤销', onClick: () => store.restoreCustomApi(snap) } });
+                                  }}
+                                  aria-label="删除"
+                                >
+                                  ✕
+                                </button>
+                              </>
+                            )}
+                          </div>
                         )}
-                        {fromSubscription && (
-                          <span
-                            className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent align-middle"
-                            title="来自数据源订阅，重新同步时此源的名称/地址会以订阅内容为准"
-                          >
-                            订阅
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-faint truncate">{api.url}</div>
-                    </div>
-                    {healthBadge(api.key)}
-                    {testButton(api.key, api.url)}
-                    {fromSubscription ? (
-                      // 订阅源由远端列表管理：编辑会被下次同步覆盖，删除会复活，引导到订阅区操作
-                      <>
-                        <button
-                          className="rounded-md p-1.5 text-muted/40"
-                          aria-label="订阅源不可单独编辑"
-                          title="该源来自订阅，编辑修改会在下次同步时被覆盖；如需调整请修改远端订阅列表后重新同步"
-                          onClick={() => toast('订阅源以远端列表为准；请修改远端订阅内容后重新同步', 'info')}
-                        >
-                          ✎
-                        </button>
-                        <button
-                          className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-red-400"
-                          onClick={() => {
-                            store.removeCustomApi(api.key);
-                            toast('已移除；注意：重新同步订阅时该源会恢复', 'info');
-                          }}
-                          aria-label="删除"
-                          title="移除此源（重新同步订阅时会恢复）"
-                        >
-                          ✕
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-accent"
-                          onClick={() => setEditing(api.key)}
-                          aria-label="编辑"
-                        >
-                          ✎
-                        </button>
-                        <button
-                          className="rounded-md p-1.5 text-muted transition-colors hover:bg-hover hover:text-red-400"
-                          onClick={() => store.removeCustomApi(api.key)}
-                          aria-label="删除"
-                        >
-                          ✕
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
-              </li>
-              );
-            })}
-            </ul>
-            )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           </>
         )}
@@ -512,12 +604,21 @@ function SourceSubscriptions() {
   const { toast } = useToast();
   const [subUrl, setSubUrl] = useState('');
   const [syncing, setSyncing] = useState<string | null>(null);
+  // 发布状态：进行中 + 上一次的发布结果（链接、粘贴板来源与条数）
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState<{
+    url: string;
+    provider: string;
+    sources: number;
+    liveSources: number;
+  } | null>(null);
 
   const sync = async (url: string) => {
     setSyncing(url);
     try {
-      const { vodCount, liveCount } = await syncSourceSubscription(url);
-      toast(`已同步 ${vodCount} 个点播源、${liveCount} 个直播源`, 'success');
+      const { vodCount, liveCount, stats } = await syncSourceSubscription(url);
+      const notice = describeParseStats(stats, { includeSamples: false });
+      toast(`已同步 ${vodCount} 个点播源、${liveCount} 个直播源${notice ? '：' + notice : ''}`, 'success');
       setSubUrl('');
     } catch (err) {
       toast(err instanceof Error ? err.message : '订阅同步失败', 'error');
@@ -533,6 +634,58 @@ function SourceSubscriptions() {
       return;
     }
     void sync(url);
+  };
+
+  /**
+   * 发布当前「已勾选启用」的源：只把真正在参与搜索的源发出去
+   * （未勾选的、以及被自动停用的都排除）。注意这与「导出数据源」的全量语义不同。
+   */
+  const publish = async () => {
+    const seen = new Set<string>();
+    const sources = store.selectedKeys
+      .map((key) => resolveSource(store, key))
+      .filter((s): s is SourceConfig => !!s && validateSourceUrl(s.url) && !isSourceDisabled(store, s.key))
+      .filter((s) => {
+        const u = s.url.replace(/\/+$/, '');
+        if (seen.has(u)) return false;
+        seen.add(u);
+        return true;
+      })
+      .map(({ name, url }) => ({ name, url }));
+
+    const liveSeen = new Set<string>();
+    const liveSources = allLiveSources(store)
+      .filter((s) => store.liveSelectedUrls.includes(s.url))
+      .filter((s) => {
+        if (liveSeen.has(s.url)) return false;
+        liveSeen.add(s.url);
+        return true;
+      })
+      .map(({ name, url, epg }) => ({ name: name || hostnameOf(url), url, epg }));
+
+    if (sources.length === 0 && liveSources.length === 0) {
+      toast('没有已勾选启用的源可发布', 'warning');
+      return;
+    }
+
+    setPublishing(true);
+    try {
+      const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources });
+      setPublished(result);
+      toast(`已发布 ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}`, 'success');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : '发布失败', 'error');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const copyPublished = () => {
+    if (!published) return;
+    navigator.clipboard
+      .writeText(published.url)
+      .then(() => toast('订阅链接已复制', 'success'))
+      .catch(() => toast('复制失败，请手动选中复制', 'warning'));
   };
 
   const exportSources = () => {
@@ -573,22 +726,63 @@ function SourceSubscriptions() {
       <SectionTitle
         title="数据源订阅 / 分享"
         extra={
-          <button
-            className="btn-ghost !py-1 !px-2.5 text-xs"
-            onClick={exportSources}
-            disabled={
-              store.customAPIs.length + store.envSources.length + store.liveSubscriptions.length + store.liveEnvSources.length ===
-              0
-            }
-          >
-            导出数据源
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              className="btn-ghost !py-1 !px-2.5 text-xs"
+              onClick={publish}
+              disabled={publishing}
+              title="把当前已勾选启用的源上传到公开粘贴板，生成可直接订阅的链接"
+            >
+              {publishing ? '发布中…' : '发布为链接'}
+            </button>
+            <button
+              className="btn-ghost !py-1 !px-2.5 text-xs"
+              onClick={exportSources}
+              disabled={
+                store.customAPIs.length + store.envSources.length + store.liveSubscriptions.length + store.liveEnvSources.length ===
+                0
+              }
+            >
+              导出数据源
+            </button>
+          </div>
         }
       />
+
+      {/* 发布结果：链接公开可读、粘贴板也可能随时清理，这些风险直接写在这里而不是只在 toast 里闪一下 */}
+      {published && (
+        <div className="mb-3 rounded-lg border border-line bg-chip/60 p-2.5">
+          <div className="flex items-center gap-1.5">
+            <input
+              readOnly
+              value={published.url}
+              className="input flex-1 min-w-0 !py-1.5 text-xs"
+              aria-label="已发布的订阅地址"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <button className="btn-ghost btn-sm shrink-0" onClick={copyPublished}>
+              复制
+            </button>
+            <button
+              className="btn-ghost btn-sm shrink-0"
+              onClick={() => {
+                setSubUrl(published.url);
+                void sync(published.url);
+              }}
+            >
+              直接订阅
+            </button>
+          </div>
+          <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
+            已发布到 {published.provider}（{published.sources} 个点播源、{published.liveSources} 个直播源）。
+            链接内容公开可读，粘贴板也可能随时清理——长期使用建议自行托管。
+          </p>
+        </div>
+      )}
       <div className="flex gap-2 mb-2">
         <input
           className="input w-full"
-          placeholder="订阅地址（LibreTV-SourceList JSON 的 URL）"
+          placeholder="订阅地址（LibreTV-SourceList / TVBOX 配置的 URL）"
           value={subUrl}
           onChange={(e) => setSubUrl(e.target.value)}
           onKeyDown={(e) => {
@@ -606,10 +800,17 @@ function SourceSubscriptions() {
       ) : (
         <ul className="space-y-2 max-h-[30vh] overflow-y-auto scrollbar-thin pr-1">
           {store.subscriptions.map((sub) => {
-            const vodCount = store.customAPIs.filter((a) => a.key.startsWith(subKeyPrefix(sub.url))).length;
+            const vodCount = store.customAPIs.filter((a) => keyBelongsToSubscription(a.key, subKeyPrefix(sub.url))).length;
             const liveCount = store.liveSubscriptions.filter((s) => s.fromSubscription === sub.url).length;
             return (
-            <li key={sub.url} className="bg-card rounded-lg p-3 transition-colors hover:bg-hover/50">
+            <li
+              key={sub.url}
+              className={cn(
+                'bg-card rounded-lg p-3 transition-colors hover:bg-hover/50',
+                // 与源列表的「未勾选」用同一套停用观感：淡显 + 徽章说明
+                sub.enabled === false && 'opacity-70'
+              )}
+            >
               <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-content truncate">{sub.name || hostnameOf(sub.url)}</div>
@@ -617,11 +818,37 @@ function SourceSubscriptions() {
                     {sub.url}
                     {sub.lastSync && ` · 同步于 ${formatRelativeTime(sub.lastSync)}`}
                   </div>
-                  <div className="mt-1 flex gap-1">
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">点播 {vodCount}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent">直播 {liveCount}</span>
+                    {sub.enabled === false && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500">已停用</span>
+                    )}
                   </div>
                 </div>
+                <button
+                  role="switch"
+                  aria-checked={sub.enabled !== false}
+                  aria-label={sub.enabled === false ? '启用该订阅' : '停用该订阅'}
+                  title={
+                    sub.enabled === false
+                      ? '当前已停用（其源不参与搜索），点击启用'
+                      : '停用后该订阅下的源暂不参与搜索；已导入的数据与各源勾选状态都保留'
+                  }
+                  className={cn(
+                    'relative h-[22px] w-10 shrink-0 rounded-full transition-colors duration-200',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40',
+                    sub.enabled !== false ? 'bg-accent' : 'bg-chip ring-1 ring-inset ring-line'
+                  )}
+                  onClick={() => store.setSubscriptionEnabled(sub.url, sub.enabled === false)}
+                >
+                  <span
+                    className={cn(
+                      'absolute left-[2px] top-[2px] h-[18px] w-[18px] rounded-full bg-white shadow-sm transition-transform duration-200 ease-out',
+                      sub.enabled !== false ? 'translate-x-[18px]' : 'translate-x-0'
+                    )}
+                  />
+                </button>
                 <button
                   className="rounded-md p-1.5 shrink-0 text-muted transition-colors hover:bg-hover hover:text-accent disabled:opacity-40"
                   disabled={syncing === sub.url}
