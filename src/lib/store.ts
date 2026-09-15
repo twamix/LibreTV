@@ -34,6 +34,8 @@ export interface SourceSubscription {
   name?: string;
   /** 上次同步成功时间 */
   lastSync?: number;
+  /** 订阅整体开关：false = 停用（其下源不参与搜索，数据与勾选状态保留）；undefined/true = 启用 */
+  enabled?: boolean;
 }
 
 /** 直播源：远程 M3U 播放列表；可来自用户手动添加，也可来自统一订阅 */
@@ -49,6 +51,18 @@ export interface LiveSubscription {
    * 删除订阅时按此归属精确清理，避免误删用户手动添加的源。
    */
   fromSubscription?: string;
+}
+
+/** 删除点播源后的撤销快照 */
+export interface RemovedSourceSnapshot {
+  entry: SourceConfig;
+  selected: boolean;
+}
+
+/** 删除直播源后的撤销快照 */
+export interface RemovedLiveSnapshot {
+  entry: LiveSubscription;
+  selected: boolean;
 }
 
 /** 直播最近观看条目（上限 20 条，按 url 去重） */
@@ -91,10 +105,35 @@ export function subKeyPrefix(url: string): string {
   return `sub_${h.toString(36)}`;
 }
 
+/**
+ * 判断源 key 是否属于指定订阅。
+ * 不能直接 startsWith(prefix)：两个不同订阅的 hash36 可能恰好互为前缀
+ * （如 sub_1a 与 sub_1a2b），此时会误伤另一个订阅的源。
+ * key 的完整形态是 `${prefix}_${i}`，因此要求前缀后紧跟分隔符。
+ */
+export function keyBelongsToSubscription(key: string, prefix: string): boolean {
+  return key === prefix || key.startsWith(`${prefix}_`);
+}
+
 /** 点播源自动停用阈值：连续失败/超时达到该次数即临时摘除 */
 export const SOURCE_DISABLE_THRESHOLD = 2;
-/** 点播源自动停用时长：到期后自动恢复参与搜索 */
-export const SOURCE_DISABLE_TTL_MS = 30 * 60 * 1000;
+/**
+ * 点播源自动停用阶梯：下标 i 对应第 i+1 次停用，超出数组长度则进入长期停用（permanent）。
+ * 第 1 次 30 分钟、第 2 次 24 小时、第 3 次起只能手动恢复。
+ */
+export const SOURCE_DISABLE_LADDER = [30 * 60 * 1000, 24 * 60 * 60 * 1000];
+
+/** 一次「源被自动停用」的事件，供调用方按级别提示 */
+export interface SourceDisableEvent {
+  /** 源 key */
+  key: string;
+  /** 第几次被停用（从 1 开始） */
+  level: number;
+  /** 长期停用：不设到期时间，只能手动恢复 */
+  permanent: boolean;
+  /** 本次停用时长（毫秒）；长期停用时为 undefined */
+  ttlMs?: number;
+}
 
 /** 点播源健康度条目（按 sourceKey），随搜索结果滚动更新 */
 export interface SourceHealthEntry {
@@ -106,6 +145,10 @@ export interface SourceHealthEntry {
   failStreak: number;
   /** 命中阈值后的临时停用截止时间（epoch ms）；恢复成功后清除 */
   disabledUntil?: number;
+  /** 累计的自动停用等级（决定惩罚时长）；每成功一次降一级 */
+  disableCount?: number;
+  /** 阶梯用尽后的长期停用：不设到期时间，只能由用户手动恢复 */
+  permanent?: boolean;
   timestamp: number;
 }
 
@@ -144,7 +187,10 @@ interface AppState extends AppSettings {
   adultConfigured: boolean;
   addCustomApi: (api: Omit<SourceConfig, 'key'> & { key?: string }) => void;
   updateCustomApi: (key: string, patch: Partial<SourceConfig>) => void;
-  removeCustomApi: (key: string) => void;
+  /** 删除点播源；返回被删快照供撤销，key 不存在时返回 null */
+  removeCustomApi: (key: string) => RemovedSourceSnapshot | null;
+  /** 撤销删除；原 key 已被占用（如订阅重新同步占用）时放弃并返回 false */
+  restoreCustomApi: (snapshot: RemovedSourceSnapshot) => boolean;
   toggleSourceSelected: (key: string) => void;
   setSelectedKeys: (keys: string[]) => void;
   setEnvSources: (list: SourceConfig[]) => string[];
@@ -152,6 +198,8 @@ interface AppState extends AppSettings {
   markAutoSelectRun: () => void;
   addSubscription: (url: string, name?: string) => void;
   removeSubscription: (url: string) => void;
+  /** 订阅整体开关：false = 停用（其下源不参与搜索），undefined/true = 启用；仅改开关，不触碰已导入的源与勾选 */
+  setSubscriptionEnabled: (url: string, enabled: boolean) => void;
   markSubscriptionSynced: (url: string, name?: string) => void;
   /** 用订阅内容整体替换该订阅名下的点播源，返回导入数量与新导入的源 key（后者供测速自动勾选） */
   applySubscriptionSources: (subUrl: string, list: Omit<SourceConfig, 'key'>[]) => { count: number; freshKeys: string[] };
@@ -159,7 +207,14 @@ interface AppState extends AppSettings {
   applySubscriptionLive: (subUrl: string, list: Omit<LiveSourceConfig, 'key'>[]) => number;
   setLiveEnvSources: (list: LiveSourceConfig[]) => void;
   addLiveSubscription: (url: string, name?: string, epg?: string) => void;
-  removeLiveSubscription: (url: string) => void;
+  /** 删除直播源；返回被删快照供撤销，不存在时返回 null */
+  removeLiveSubscription: (url: string) => RemovedLiveSnapshot | null;
+  /** 撤销删除直播源（恢复条目与其启用状态） */
+  restoreLiveSubscription: (snapshot: RemovedLiveSnapshot) => void;
+  /** 更新直播源的名称/EPG（地址不可改：换地址等于换源，会影响启用状态与最近观看关联） */
+  updateLiveSubscription: (url: string, patch: { name?: string; epg?: string }) => void;
+  /** 整体替换已启用的直播源 URL 列表（供批量全选/清空） */
+  setLiveSelectedUrls: (urls: string[]) => void;
   markLiveSynced: (url: string, name?: string, epg?: string) => void;
   toggleLiveSelected: (url: string) => void;
   toggleLiveFavorite: (channelUrl: string) => void;
@@ -172,12 +227,13 @@ interface AppState extends AppSettings {
   setLiveProbeResults: (entries: Record<string, LiveProbeEntry>) => void;
   clearLiveProbeResults: () => void;
   /**
-   * 记录一次搜索的逐源健康度；连续失败/超时达到阈值即标记临时停用。
+   * 记录一次搜索的逐源健康度；连续失败/超时达到阈值即按阶梯标记停用
+   * （第 1 次 30 分钟、第 2 次 24 小时、第 3 次起长期停用，仅手动恢复）。
    * 不直接改 selectedKeys（用户勾选意图保留，且避免变更引用触发搜索重发），
-   * 参与搜索与否由调用方经 isSourceDisabled 过滤；到期自动恢复。
-   * 返回本次新被自动停用的源 key 列表（供调用方 toast 提示）。
+   * 参与搜索与否由调用方经 isSourceDisabled 过滤；临时停用到期自动恢复。
+   * 返回本次新被自动停用的事件列表（供调用方按级别 toast 提示）。
    */
-  recordSourceHealth: (outcomes: SourceSearchOutcome[]) => string[];
+  recordSourceHealth: (outcomes: SourceSearchOutcome[]) => SourceDisableEvent[];
   /** 清除单个源的健康度记录（手动恢复入口） */
   clearSourceHealth: (key: string) => void;
   markEnvSubsSeen: (urls: string[]) => void;
@@ -247,10 +303,24 @@ export const useAppStore = create<AppState>()(
       },
 
       removeCustomApi: (key) => {
+        const entry = get().customAPIs.find((a) => a.key === key);
+        if (!entry) return null;
+        const selected = get().selectedKeys.includes(key);
         set({
           customAPIs: get().customAPIs.filter((a) => a.key !== key),
           selectedKeys: get().selectedKeys.filter((k) => k !== key),
         });
+        return { entry, selected };
+      },
+
+      restoreCustomApi: ({ entry, selected }) => {
+        // key 已被重新占用（如订阅重新同步生成了同 key 的源）时放弃撤销，避免出现重复条目
+        if (get().customAPIs.some((a) => a.key === entry.key)) return false;
+        set({
+          customAPIs: [...get().customAPIs, entry],
+          selectedKeys: selected ? [...get().selectedKeys, entry.key] : get().selectedKeys,
+        });
+        return true;
       },
 
       toggleSourceSelected: (key) => {
@@ -290,6 +360,12 @@ export const useAppStore = create<AppState>()(
       addSubscription: (url, name) => {
         if (get().subscriptions.some((s) => s.url === url)) return;
         set({ subscriptions: [...get().subscriptions, { url, name }] });
+      },
+
+      setSubscriptionEnabled: (url, enabled) => {
+        set({
+          subscriptions: get().subscriptions.map((s) => (s.url === url ? { ...s, enabled } : s)),
+        });
       },
 
       removeSubscription: (url) => {
@@ -405,11 +481,35 @@ export const useAppStore = create<AppState>()(
       },
 
       removeLiveSubscription: (url) => {
+        const entry = get().liveSubscriptions.find((s) => s.url === url);
+        if (!entry) return null;
+        const selected = get().liveSelectedUrls.includes(url);
         set({
           liveSubscriptions: get().liveSubscriptions.filter((s) => s.url !== url),
           liveSelectedUrls: get().liveSelectedUrls.filter((u) => u !== url),
         });
+        return { entry, selected };
       },
+
+      restoreLiveSubscription: ({ entry, selected }) => {
+        if (get().liveSubscriptions.some((s) => s.url === entry.url)) return;
+        set({
+          liveSubscriptions: [...get().liveSubscriptions, entry],
+          liveSelectedUrls: selected
+            ? [...new Set([...get().liveSelectedUrls, entry.url])]
+            : get().liveSelectedUrls,
+        });
+      },
+
+      updateLiveSubscription: (url, patch) => {
+        set({
+          liveSubscriptions: get().liveSubscriptions.map((s) =>
+            s.url === url ? { ...s, ...patch } : s
+          ),
+        });
+      },
+
+      setLiveSelectedUrls: (urls) => set({ liveSelectedUrls: urls }),
 
       toggleLiveSelected: (url) => {
         const cur = get().liveSelectedUrls;
@@ -473,34 +573,55 @@ export const useAppStore = create<AppState>()(
         if (outcomes.length === 0) return [];
         const now = Date.now();
         const health: Record<string, SourceHealthEntry> = {};
-        // 顺带清理陈旧条目（停用 TTL 早已过期的死记录）
+        // 顺带清理陈旧条目：超过 7 天没再参与过搜索的源，其惩罚等级一并作废
         for (const [key, e] of Object.entries(get().sourceHealth)) {
           if (now - e.timestamp < 7 * 24 * 60 * 60 * 1000) health[key] = e;
         }
-        const newlyDisabled: string[] = [];
+        const events: SourceDisableEvent[] = [];
         for (const o of outcomes) {
           const prev = health[o.sourceKey];
-          const failStreak = o.ok ? 0 : (prev?.failStreak ?? 0) + 1;
-          // entry 直接覆盖旧记录：成功时 disabledUntil 随之消失（立即恢复），
-          // 未达阈值时保留旧停用标记不动
+          // 停用期已过 → 上一次的连续失败已被「停用 + 恢复」打断，重新从 1 开始累计
+          const interrupted = !!prev?.disabledUntil && prev.disabledUntil <= now;
+          const failStreak = o.ok ? 0 : interrupted ? 1 : (prev?.failStreak ?? 0) + 1;
+          // 成功一次即降一级（而非清零）：偶发抽风的源会自己降回来，
+          // 从未成功过的死源才会一路升到长期停用
+          const disableCount = o.ok
+            ? Math.max(0, (prev?.disableCount ?? 0) - 1)
+            : (prev?.disableCount ?? 0);
+          // entry 覆盖旧记录：成功时停用标记随之消失（立即恢复）
           const entry: SourceHealthEntry = {
             ok: o.ok,
             ms: o.ms,
             error: o.error,
             timedOut: o.timedOut,
             failStreak,
+            disableCount,
             timestamp: now,
           };
           if (!o.ok && failStreak >= SOURCE_DISABLE_THRESHOLD) {
-            entry.disabledUntil = now + SOURCE_DISABLE_TTL_MS;
-            if (!prev?.disabledUntil || prev.disabledUntil < now) {
-              newlyDisabled.push(o.sourceKey);
+            const alreadyDisabled = prev?.permanent === true || (prev?.disabledUntil ?? 0) > now;
+            if (alreadyDisabled) {
+              // 已在停用期内（正常不会参与搜索，此处仅作防御）：保持原等级与截止时间
+              entry.disableCount = prev?.disableCount ?? disableCount;
+              entry.disabledUntil = prev?.disabledUntil;
+              entry.permanent = prev?.permanent;
+            } else {
+              // 第 N 次被停用 → 取阶梯第 N 级；阶梯用尽则进入长期停用
+              const nextLevel = disableCount + 1;
+              const ttlMs: number | undefined = SOURCE_DISABLE_LADDER[nextLevel - 1];
+              entry.disableCount = nextLevel;
+              if (ttlMs === undefined) {
+                entry.permanent = true;
+              } else {
+                entry.disabledUntil = now + ttlMs;
+              }
+              events.push({ key: o.sourceKey, level: nextLevel, permanent: ttlMs === undefined, ttlMs });
             }
           }
           health[o.sourceKey] = entry;
         }
         set({ sourceHealth: health });
-        return newlyDisabled;
+        return events;
       },
 
       clearSourceHealth: (key) => {
@@ -628,7 +749,8 @@ export function resolveSource(
 
 /**
  * 源当前是否处于自动停用期（连续超时/失败触发）。
- * 停用到期后此判断自然翻转为 false，即「到期自动恢复参与搜索」的懒实现。
+ * 临时停用到期后此判断自然翻转为 false，即「到期自动恢复参与搜索」的懒实现；
+ * 长期停用（阶梯用尽）没有到期时间，只有手动恢复（clearSourceHealth）才能解除。
  */
 export function isSourceDisabled(
   state: Pick<AppState, 'sourceHealth'>,
@@ -636,7 +758,22 @@ export function isSourceDisabled(
   now = Date.now()
 ): boolean {
   const e = state.sourceHealth[key];
-  return !!e?.disabledUntil && e.disabledUntil > now;
+  if (!e) return false;
+  return e.permanent === true || (!!e.disabledUntil && e.disabledUntil > now);
+}
+
+/**
+ * 源是否来自一个被用户整体停用的订阅。
+ * 与 isSourceDisabled 分开判断：一个是用户主动关的、一个是系统按连续失败关的，
+ * 提示文案与恢复方式都不同，混在一起用户就看不懂源为什么不生效了。
+ */
+export function isInDisabledSubscription(
+  state: Pick<AppState, 'subscriptions'>,
+  key: string
+): boolean {
+  return state.subscriptions.some(
+    (s) => s.enabled === false && keyBelongsToSubscription(key, subKeyPrefix(s.url))
+  );
 }
 
 /** 测速后自动勾选的耗时最低来源数量 */
