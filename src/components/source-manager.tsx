@@ -604,7 +604,7 @@ function SourceSubscriptions() {
   const { toast } = useToast();
   const [subUrl, setSubUrl] = useState('');
   const [syncing, setSyncing] = useState<string | null>(null);
-  // 发布状态：进行中 + 上一次的发布结果（链接、粘贴板来源、格式与条数）
+  // 发布状态：进行中 + 上一次的发布结果（链接、来源标识、格式与条数）
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<{
     url: string;
@@ -640,8 +640,8 @@ function SourceSubscriptions() {
   /**
    * 发布当前「已勾选启用」的源：只把真正在参与搜索的源发出去
    * （未勾选的、以及被自动停用的都排除）。注意这与「导出数据源」的全量语义不同。
-   * format=tvbox 时发布为 TVBOX 客户端可直接订阅的 sites/lives 配置；
-   * format=tvbox-proxy 时发布为家人用过滤代理（单 proxy site + 直播直连），
+   * format=tvbox 时发布为常规 TVBOX 配置（sites/lives，逐源直连）；
+   * format=tvbox-proxy 时发布为家庭过滤版（单 proxy site + 直播直连），
    * 点播搜索走本站聚合代理并强制成人过滤。
    * 成人源处理（三格式一致，与本站成人规则对齐）：
    * - 成人过滤开启（yellowFilter）→ 成人源不出导；
@@ -677,9 +677,9 @@ function SourceSubscriptions() {
       toast('没有已勾选启用的源可发布', 'warning');
       return;
     }
-    // 家人用代理聚的是点播源：没有点播源时配了也搜不出东西，直接拦下
+    // 家庭过滤版聚的是点播源：没有点播源时配了也搜不出东西，直接拦下
     if (format === 'tvbox-proxy' && sources.length === 0) {
-      toast('家人用代理需要至少一个点播源', 'warning');
+      toast('家庭过滤版需要至少一个点播源', 'warning');
       return;
     }
 
@@ -687,7 +687,7 @@ function SourceSubscriptions() {
     try {
       const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources, format });
       setPublished(result);
-      const formatLabel = format === 'tvbox-proxy' ? '家人用 TVBOX 代理' : format === 'tvbox' ? 'TVBOX 配置' : '本站订阅';
+      const formatLabel = format === 'tvbox-proxy' ? '家庭过滤版' : format === 'tvbox' ? '常规 TVBOX 配置' : '本站订阅';
       const adultNote = adultExcluded ? '（已按成人规则排除成人源）' : '';
       toast(`已发布${formatLabel} ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}${adultNote}`, 'success');
     } catch (err) {
@@ -748,7 +748,7 @@ function SourceSubscriptions() {
               className="btn-ghost !py-1 !px-2.5 text-xs"
               onClick={() => publish('libretv')}
               disabled={publishing}
-              title="把当前已勾选启用的源上传到公开粘贴板，生成可直接订阅的链接"
+              title="把当前已勾选启用的源存为本站直链快照，生成可直接订阅的链接（内容只存自己服务器）"
             >
               {publishing ? '发布中…' : '发布为链接'}
             </button>
@@ -756,17 +756,17 @@ function SourceSubscriptions() {
               className="btn-ghost !py-1 !px-2.5 text-xs"
               onClick={() => publish('tvbox')}
               disabled={publishing}
-              title="把当前已勾选启用的源导出为 TVBOX 配置（sites/lives），上传到公开粘贴板后可直接填入 TVBOX 客户端订阅"
+              title="把当前已勾选启用的源导出为常规 TVBOX 配置（sites/lives，逐源直连），存为本站直链后可直接填入 TVBOX 客户端订阅"
             >
-              {publishing ? '发布中…' : '导出 TVBOX'}
+              {publishing ? '发布中…' : '常规 TVBOX'}
             </button>
             <button
               className="btn-ghost !py-1 !px-2.5 text-xs"
               onClick={() => publish('tvbox-proxy')}
               disabled={publishing}
-              title="家人用：点播只导一个过滤代理站点（搜索走本站并强制成人过滤），直播仍直连；公用分享请用「导出 TVBOX」"
+              title="家庭过滤版：点播只导一个过滤代理站点（搜索走本站并强制成人过滤），直播仍直连；公用分享请用「常规 TVBOX」"
             >
-              {publishing ? '发布中…' : '家人用 TVBOX'}
+              {publishing ? '发布中…' : '家庭过滤版'}
             </button>
             <button
               className="btn-ghost !py-1 !px-2.5 text-xs"
@@ -782,7 +782,7 @@ function SourceSubscriptions() {
         }
       />
 
-      {/* 发布结果：链接公开可读、粘贴板也可能随时清理，这些风险直接写在这里而不是只在 toast 里闪一下 */}
+      {/* 发布结果：链接持有者可读、服务重启后快照丢失需重发，这些说明直接写在这里而不是只在 toast 里闪一下 */}
       {published && (
         <div className="mb-3 rounded-lg border border-line bg-chip/60 p-2.5">
           <div className="flex items-center gap-1.5">
@@ -807,14 +807,14 @@ function SourceSubscriptions() {
             </button>
           </div>
           <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
-            已发布到 {published.provider}（{published.format === 'tvbox-proxy' ? '家人用 TVBOX 代理' : published.format === 'tvbox' ? 'TVBOX 配置' : '本站订阅'}：
+            已发布到 {published.provider}（{published.format === 'tvbox-proxy' ? '家庭过滤版' : published.format === 'tvbox' ? '常规 TVBOX 配置' : '本站订阅'}：
             {published.sources} 个点播源、{published.liveSources} 个直播源）。
             {published.format === 'tvbox-proxy'
               ? '把该链接填入家里电视 TVBOX 客户端的配置地址即可使用；点播搜索走你的服务器并强制成人过滤（TVBOX 侧关不掉），直播仍直连。成人源已按本站成人规则过滤。'
               : published.format === 'tvbox'
                 ? '把该链接填入 TVBOX 客户端的配置地址即可使用；成人源已按本站成人规则过滤——TVBOX 侧无细粒度过滤，源一旦给出即明文可用。'
                 : '该链接可填入本站或其他 LibreTV 的订阅框。'}
-            链接内容公开可读，粘贴板也可能随时清理——长期使用建议自行托管。
+            链接内容只存你的服务器、不走第三方，知道链接的人可读取；服务重启后需重新发布。
           </p>
         </div>
       )}

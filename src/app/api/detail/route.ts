@@ -19,7 +19,7 @@ function parseSource(raw: string | null): SourceConfig | null {
 /**
  * 视频详情：优先走列表接口 ?ac=videolist&ids=，
  * 拿不到播放地址时（部分源需要爬详情页）降级到 detail 页 HTML 提取。
- * 解析核心复用 `@/lib/detail-resolve`，与家人用 TVBOX 过滤代理共用同一套链路。
+ * 解析核心复用 `@/lib/detail-resolve`，与家庭过滤版 TVBOX 代理共用同一套链路。
  */
 export async function GET(req: Request) {
   const guarded = guardRequest(req);

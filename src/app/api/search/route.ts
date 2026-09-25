@@ -30,7 +30,7 @@ function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolea
  * - `?stream=1` 以 NDJSON 逐源推送（完成一个推一条，健康源的结果不再等坏源超时），
  *   最终推送聚合后的 done 事件并写入短缓存。
  * 聚合核心（searchSource / aggregateOutcomes）复用 `@/lib/search-aggregate`，
- * 与家人用 TVBOX 过滤代理共用同一套搜索与成人过滤逻辑。
+ * 与家庭过滤版 TVBOX 代理共用同一套搜索与成人过滤逻辑。
  */
 export async function POST(req: Request) {
   const guarded = guardRequest(req);

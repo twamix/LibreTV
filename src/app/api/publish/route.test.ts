@@ -1,27 +1,12 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { POST } from './route';
 import { SESSION_COOKIE, signSession } from '@/lib/auth';
-import { publishSourceList } from '@/lib/source-list-publish';
+import { clearShares, getShareText } from '@/lib/share-store';
 
 /**
- * 发布接口单测：登录守卫、字段白名单与条数上限。
- * 这里只验证「接口不成为任意内容上传通道」，真实上传逻辑由发布器自身测试覆盖。
+ * 发布接口单测：登录守卫、字段白名单与条数上限，以及本站直链形状。
+ * 内容直存服务端内存，不再经过第三方粘贴板——断言返回的直链能读回原文。
  */
-
-const state = vi.hoisted(() => ({
-  /** 记录传给发布器的文本，用于断言白名单是否生效 */
-  publishedText: null as string | null,
-  fail: false,
-}));
-
-vi.mock('@/lib/source-list-publish', () => ({
-  MAX_PUBLISH_BYTES: 256 * 1024,
-  publishSourceList: vi.fn(async (text: string) => {
-    if (state.fail) throw new Error('发布失败：paste.rs（HTTP 500）');
-    state.publishedText = text;
-    return { url: 'https://paste.rs/abc123', provider: 'paste.rs' };
-  }),
-}));
 
 function makeRequest(body: unknown, options?: { authenticated?: boolean }): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -35,18 +20,18 @@ function makeRequest(body: unknown, options?: { authenticated?: boolean }): Requ
   });
 }
 
-/** 记录每次发布调用的文本（tvbox-proxy 走两步发布：源列表 + TVBOX 配置） */
-const publishedTexts = (): string[] =>
-  (publishSourceList as unknown as { mock: { calls: string[][] } }).mock.calls.map((c) => c[0]);
+/** 从直链 URL 反查内存快照原文（两步发布的 tvbox-proxy 会存两份，逐个查） */
+function readShareText(shareUrl: string): string | null {
+  const m = /\/api\/share\/([0-9a-f]{32,64})/i.exec(shareUrl);
+  return m ? getShareText(m[1]) : null;
+}
 
 beforeAll(() => {
   process.env.PASSWORD = 'test-password';
 });
 
 beforeEach(() => {
-  state.publishedText = null;
-  state.fail = false;
-  vi.mocked(publishSourceList).mockClear();
+  clearShares();
 });
 
 describe('POST /api/publish', () => {
@@ -60,10 +45,9 @@ describe('POST /api/publish', () => {
     expect(res.status).toBe(400);
   });
 
-  it('没有任何可用源时返回 400，且不触达粘贴板', async () => {
+  it('没有任何可用源时返回 400，且不存快照', async () => {
     const res = await POST(makeRequest({ sources: [], liveSources: [] }));
     expect(res.status).toBe(400);
-    expect(state.publishedText).toBeNull();
   });
 
   it('只透出白名单字段：未知键与非 http 地址一律剔除', async () => {
@@ -79,7 +63,8 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    const published = state.publishedText ?? '';
+    const json = (await res.json()) as { url: string };
+    const published = readShareText(json.url) ?? '';
     expect(published).toContain('a.example.com');
     expect(published).toContain('live.example.com/tv.m3u');
     expect(published).not.toContain('etc/passwd');
@@ -87,7 +72,7 @@ describe('POST /api/publish', () => {
     expect(published).not.toContain('secret');
   });
 
-  it('成功时返回链接、来源与条数统计', async () => {
+  it('成功时返回本站直链、来源标识与条数统计', async () => {
     const res = await POST(
       makeRequest({
         sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod' }],
@@ -96,8 +81,8 @@ describe('POST /api/publish', () => {
     );
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toMatchObject({
-      url: 'https://paste.rs/abc123',
-      provider: 'paste.rs',
+      url: expect.stringMatching(/^https:\/\/local\.test\/api\/share\/[0-9a-f]{32,64}$/),
+      provider: '本站直链',
       format: 'libretv',
       sources: 1,
       liveSources: 1,
@@ -113,9 +98,10 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({ format: 'tvbox', sources: 1, liveSources: 1 });
+    const json = (await res.json()) as { url: string; format: string; sources: number; liveSources: number };
+    expect(json).toMatchObject({ format: 'tvbox', sources: 1, liveSources: 1 });
 
-    const published = state.publishedText ?? '';
+    const published = readShareText(json.url) ?? '';
     const config = JSON.parse(published) as {
       sites: { key: string; type: number; api: string }[];
       lives: { name: string; type: number; url: string; epg?: string }[];
@@ -141,8 +127,9 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({ format: 'libretv' });
-    expect(state.publishedText ?? '').toContain('"version": 2');
+    const json = (await res.json()) as { url: string; format: string };
+    expect(json.format).toBe('libretv');
+    expect(readShareText(json.url) ?? '').toContain('"version": 2');
   });
 
   it('成人内容按源标记过滤：前端负责剔除，接口只透出白名单字段', async () => {
@@ -155,12 +142,13 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    const published = state.publishedText ?? '';
+    const json = (await res.json()) as { url: string };
+    const published = readShareText(json.url) ?? '';
     expect(published).toContain('a.example.com');
     expect(published).not.toContain('isAdult');
   });
 
-  it('format=tvbox-proxy 时两步发布：源列表带 proxyToken，TVBOX 配置为单 proxy site + 直连 lives', async () => {
+  it('format=tvbox-proxy 时单步发布：源列表带 proxyToken，TVBOX 配置为单 proxy site + 直连 lives', async () => {
     const res = await POST(
       makeRequest({
         format: 'tvbox-proxy',
@@ -169,18 +157,12 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toMatchObject({ format: 'tvbox-proxy', sources: 1, liveSources: 1 });
+    const json = (await res.json()) as { url: string; format: string; sources: number; liveSources: number };
+    expect(json).toMatchObject({ format: 'tvbox-proxy', sources: 1, liveSources: 1 });
+    expect(json.url).toMatch(/^https:\/\/local\.test\/api\/share\/[0-9a-f]{32,64}$/);
 
-    const texts = publishedTexts();
-    expect(texts).toHaveLength(2);
-    // 第一步：源列表（含 token，不含直播源——代理只聚点播）
-    const sourceList = JSON.parse(texts[0]) as { sources: { url: string }[]; liveSources: unknown[]; proxyToken: string };
-    expect(sourceList.sources).toHaveLength(1);
-    expect(sourceList.liveSources).toHaveLength(0);
-    expect(typeof sourceList.proxyToken).toBe('string');
-    expect(sourceList.proxyToken.length).toBeGreaterThanOrEqual(32);
-    // 第二步：TVBOX 配置——单 proxy site + 直连直播
-    const config = JSON.parse(texts[1]) as {
+    // 第二步存的是 TVBOX 配置：单 proxy site + 直连直播
+    const config = JSON.parse(readShareText(json.url) ?? '') as {
       sites: { key: string; type: number; api: string }[];
       lives: { name: string; type: number; url: string; epg?: string }[];
     };
@@ -188,8 +170,18 @@ describe('POST /api/publish', () => {
     expect(config.sites[0].type).toBe(1);
     const apiUrl = new URL(config.sites[0].api);
     expect(`${apiUrl.origin}${apiUrl.pathname}`).toBe('https://local.test/api/tvbox/proxy');
-    expect(apiUrl.searchParams.get('token')).toBe(sourceList.proxyToken);
-    expect(apiUrl.searchParams.get('list')).toBe('https://paste.rs/abc123');
+    expect(apiUrl.searchParams.get('token')).toMatch(/^[0-9a-f]{32}$/);
+    // list 指向第一步存的本站源列表直链，且 token 与源列表里的 proxyToken 一致
+    const listUrl = apiUrl.searchParams.get('list') ?? '';
+    expect(listUrl).toMatch(/^https:\/\/local\.test\/api\/share\/[0-9a-f]{32,64}$/);
+    const sourceList = JSON.parse(readShareText(listUrl) ?? '') as {
+      sources: { url: string }[];
+      liveSources: unknown[];
+      proxyToken: string;
+    };
+    expect(sourceList.sources).toHaveLength(1);
+    expect(sourceList.liveSources).toHaveLength(0);
+    expect(sourceList.proxyToken).toBe(apiUrl.searchParams.get('token'));
     expect(config.lives).toHaveLength(1);
     expect(config.lives[0]).toMatchObject({
       name: 'L',
@@ -199,7 +191,7 @@ describe('POST /api/publish', () => {
     });
   });
 
-  it('format=tvbox-proxy 无点播源时返回 400 且不触达粘贴板', async () => {
+  it('format=tvbox-proxy 无点播源时返回 400 且不存快照', async () => {
     const res = await POST(
       makeRequest({
         format: 'tvbox-proxy',
@@ -208,7 +200,6 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(400);
-    expect(publishSourceList).not.toHaveBeenCalled();
   });
 
   it('format=tvbox-proxy 只透出白名单字段，isAdult 不会进入源列表', async () => {
@@ -219,15 +210,11 @@ describe('POST /api/publish', () => {
       })
     );
     expect(res.status).toBe(200);
-    const texts = publishedTexts();
-    expect(texts[0]).toContain('a.example.com');
-    expect(texts[0]).not.toContain('isAdult');
-  });
-
-  it('发布器全部失败时返回 502 并透出原因', async () => {
-    state.fail = true;
-    const res = await POST(makeRequest({ sources: [{ name: 'A', url: 'https://a.example.com/x' }] }));
-    expect(res.status).toBe(502);
-    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('paste.rs') });
+    const json = (await res.json()) as { url: string };
+    const config = JSON.parse(readShareText(json.url) ?? '') as { sites: { api: string }[] };
+    const listUrl = new URL(config.sites[0].api).searchParams.get('list') ?? '';
+    const sourceListText = readShareText(listUrl) ?? '';
+    expect(sourceListText).toContain('a.example.com');
+    expect(sourceListText).not.toContain('isAdult');
   });
 });

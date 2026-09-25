@@ -162,14 +162,14 @@ export const api = {
     return request<SourceListPayload>(`/api/source-list?${sp.toString()}`);
   },
 
-  /** 把当前源列表发布到第三方粘贴板，返回可直接填入订阅框的 URL */
+  /** 把当前源列表发布为本站直链快照，返回可直接填入订阅框的 URL */
   publishSourceList: (payload: {
     name?: string;
     sources: { name: string; url: string }[];
     liveSources: { name: string; url: string; epg?: string }[];
     /**
-     * tvbox：发布为 TVBOX 客户端可直接订阅的 sites/lives 配置（逐源直连）；
-     * tvbox-proxy：家人用过滤代理（单 proxy site + 直播直连，搜索走本站强制过滤）；
+     * tvbox：常规 TVBOX 配置（sites/lives，逐源直连）；
+     * tvbox-proxy：家庭过滤版（单 proxy site + 直播直连，搜索走本站强制过滤）；
      * 缺省为本站格式
      */
     format?: 'libretv' | 'tvbox' | 'tvbox-proxy';

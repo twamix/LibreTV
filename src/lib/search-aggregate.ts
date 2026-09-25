@@ -4,7 +4,7 @@ import { checkUpstreamAllowed } from './ssrf';
 import type { SearchResponse, SourceConfig, SourceSearchOutcome } from './types';
 
 /**
- * 服务端聚合搜索的复用核心：从 /api/search 抽出，供家人用 TVBOX 过滤代理共用。
+ * 服务端聚合搜索的复用核心：从 /api/search 抽出，供家庭过滤版 TVBOX 代理共用。
  * 与路由内原实现逐行一致——改这里会影响两条链路。
  */
 

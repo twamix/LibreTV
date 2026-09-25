@@ -5,6 +5,7 @@ import { resolveDetail } from '@/lib/detail-resolve';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aggregateOutcomes, searchSource } from '@/lib/search-aggregate';
+import { extractShareId, getShareText } from '@/lib/share-store';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import { parseSubscriptionJson, parseSubscriptionPayload } from '@/lib/tvbox-parser';
 import type { SourceConfig } from '@/lib/types';
@@ -12,16 +13,17 @@ import type { SourceConfig } from '@/lib/types';
 export const runtime = 'nodejs';
 
 /**
- * 家人用 TVBOX 过滤代理：把本站的聚合搜索伪装成一个 Apple CMS 单站，
+ * 家人用的 TVBOX 过滤代理：把本站的聚合搜索伪装成一个 Apple CMS 单站，
  * TVBOX 客户端只需订阅一个 site，搜索/详情全部走这台服务器——
  * 成人过滤（关键词规则与本站一致）在服务端强制执行，TVBOX 侧关不掉。
  *
  * 协议（Apple CMS 子集）：
- * - 搜索：`?list=<粘贴板URL>&token=...&ac=videolist&wd=关键词&pg=页码`
+ * - 搜索：`?list=<本站分享URL或id>&token=...&ac=videolist&wd=关键词&pg=页码`
  * - 详情：`?list=...&token=...&ac=videolist&ids=<编码id>`（ac=detail 同义）
  *
  * 认证：无登录态，token 即凭证（发布时写入源列表的 proxyToken，请求时原样带回）。
- * 源列表跟粘贴板走（60s 缓存），发布后改源无需重新配电视。
+ * 源列表存本站内存（60s 缓存），发布后改源需重新发布家人用链接（服务重启同样需重发）。
+ * 兼容以前已发布的粘贴板链接：list 指向外部 URL 时仍走出网拉取。
  * 直播不经过这里——TVBOX 配置里的 lives 仍是直连 M3U。
  */
 
@@ -29,7 +31,7 @@ const LIST_CACHE_TTL = 60 * 1000;
 const SEARCH_CACHE_TTL = 60 * 1000;
 /** 每页条数：CMS 惯例 20，TVBOX 按 pg 翻页 */
 const PAGE_LIMIT = 20;
-/** 限流：单链接每分钟 120 次（含搜索展开的多源 fan-out，家人用绰绰有余） */
+/** 限流：单链接每分钟 120 次（含搜索展开的多源 fan-out，家里电视用绰绰有余） */
 const RATE_LIMIT = 120;
 const RATE_WINDOW_MS = 60 * 1000;
 
@@ -60,7 +62,32 @@ interface ProxySources {
   sources: SourceConfig[];
 }
 
-/** 拉取并校验源列表：SSRF 校验 → 取 JSON → token 比对 → 转 SourceConfig（60s 缓存） */
+/** 从内存快照或远端拉回源列表原始 JSON：本站直链读内存，其余（旧粘贴板链接）走 SSRF + 出网 */
+async function fetchListJson(listUrl: string): Promise<{ text: string } | { error: string; status: number }> {
+  const shareId = extractShareId(listUrl);
+  if (shareId) {
+    const text = getShareText(shareId);
+    if (text === null) {
+      return { error: '源列表已失效（服务重启后需重新发布家庭过滤版链接）', status: 502 };
+    }
+    return { text };
+  }
+
+  const verdict = await checkUpstreamAllowed(listUrl);
+  if (!verdict.ok) {
+    return { error: verdict.reason, status: 400 };
+  }
+  try {
+    const res = await fetchUpstream(listUrl, { timeoutMs: 8000, headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return { error: `源列表地址返回 HTTP ${res.status}`, status: 502 };
+    }
+    return { text: await res.text() };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '源列表拉取失败', status: 502 };
+  }
+}
+
 async function loadSources(listUrl: string, token: string): Promise<ProxySources | { error: string; status: number }> {
   const cacheKey = `tvproxy:list:${listUrl}`;
   const cached = getCache<{ sources: SourceConfig[]; proxyToken: string }>(cacheKey);
@@ -71,24 +98,18 @@ async function loadSources(listUrl: string, token: string): Promise<ProxySources
     return { sources: cached.sources };
   }
 
-  const verdict = await checkUpstreamAllowed(listUrl);
-  if (!verdict.ok) {
-    return { error: verdict.reason, status: 400 };
-  }
+  const fetched = await fetchListJson(listUrl);
+  if ('error' in fetched) return fetched;
   let rawJson: unknown;
   try {
-    const res = await fetchUpstream(listUrl, { timeoutMs: 8000, headers: { Accept: 'application/json' } });
-    if (!res.ok) {
-      return { error: `源列表地址返回 HTTP ${res.status}`, status: 502 };
-    }
-    rawJson = parseSubscriptionJson(await res.text());
+    rawJson = parseSubscriptionJson(fetched.text);
   } catch (err) {
     return { error: err instanceof Error ? err.message : '源列表拉取失败', status: 502 };
   }
 
   const storedToken = (rawJson as { proxyToken?: unknown }).proxyToken;
   if (typeof storedToken !== 'string' || !storedToken) {
-    return { error: '该订阅不是家人用代理配置', status: 400 };
+    return { error: '该订阅不是家庭过滤版代理配置', status: 400 };
   }
   if (!timingSafeCompare(token, storedToken)) {
     return { error: 'token 无效', status: 403 };

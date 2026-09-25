@@ -6,7 +6,7 @@
  * - 点播：全部按 type=1（Apple CMS JSON 接口）导出，本站的点播源本身就是这类；
  * - 直播：按 type=0（M3U 播放列表）导出，可带 EPG。
  *
- * 纯字段映射，不涉及网络与 SSRF（发布链路复用 /api/publish 的粘贴板通道）。
+ * 纯字段映射，不涉及网络与 SSRF（发布链路经 /api/publish 存为本站直链快照）。
  */
 
 export interface TvboxExportVod {
@@ -45,7 +45,7 @@ export interface TvboxConfig {
 }
 
 /**
- * 家人用过滤代理配置：点播只放一个单 site，api 指向本站聚合代理；
+ * 家庭过滤版代理配置：点播只放一个单 site，api 指向本站聚合代理；
  * 直播仍是直连 M3U（代理不转直播流）。与 buildTvboxConfig 互斥使用。
  * token 拼在 api 查询串里——TVBOX 客户端请求时原样带上，代理以此认证。
  */

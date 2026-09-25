@@ -10,7 +10,8 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
-    # 无状态服务：观看历史在浏览器 IndexedDB、设置在 localStorage，无需挂载卷
+    # 无状态服务：观看历史在浏览器 IndexedDB、设置在 localStorage，无需挂载卷；
+    # 注意「发布为链接 / TVBOX」生成的本站直链快照只存服务端内存，容器重启后需重新发布
     environment:
       # 访问密码（默认 11111，按需修改）与成人内容解锁密码（设置 → 点播源 内输入后可启用 18+ 源）
       PASSWORD: "11111"

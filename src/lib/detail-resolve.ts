@@ -4,7 +4,7 @@ import { checkUpstreamAllowed } from './ssrf';
 import type { SourceConfig, VideoDetail } from './types';
 
 /**
- * 详情解析的复用核心：从 /api/detail 抽出，供家人用 TVBOX 过滤代理共用。
+ * 详情解析的复用核心：从 /api/detail 抽出，供家庭过滤版 TVBOX 代理共用。
  * 与路由内原实现逐行一致——改这里会影响两条链路。
  */
 
