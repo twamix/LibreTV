@@ -120,7 +120,7 @@ function DoubanView({ onPick }: { onPick: (title: string) => void }) {
                 className="btn-ghost"
                 onClick={() => {
                   setExpanded(true);
-                  setVisibleCount((v) => v + 25);
+                  setVisibleCount((v) => v + 16);
                 }}
               >
                 加载更多

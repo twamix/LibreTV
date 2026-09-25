@@ -139,6 +139,21 @@ describe('POST /api/publish', () => {
     expect(state.publishedText ?? '').toContain('"version": 2');
   });
 
+  it('成人内容按源标记过滤：前端负责剔除，接口只透出白名单字段', async () => {
+    // isAdult 等未知键必须被 normalizePayload 剔除——发布文本里不能出现源标记之外的元信息；
+    // 成人源的取舍由前端按 yellowFilter / adultUnlocked 决定后只传可用源，接口侧不再二次判断
+    const res = await POST(
+      makeRequest({
+        format: 'tvbox',
+        sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod', isAdult: true }],
+      })
+    );
+    expect(res.status).toBe(200);
+    const published = state.publishedText ?? '';
+    expect(published).toContain('a.example.com');
+    expect(published).not.toContain('isAdult');
+  });
+
   it('发布器全部失败时返回 502 并透出原因', async () => {
     state.fail = true;
     const res = await POST(makeRequest({ sources: [{ name: 'A', url: 'https://a.example.com/x' }] }));

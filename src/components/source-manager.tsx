@@ -641,12 +641,18 @@ function SourceSubscriptions() {
    * 发布当前「已勾选启用」的源：只把真正在参与搜索的源发出去
    * （未勾选的、以及被自动停用的都排除）。注意这与「导出数据源」的全量语义不同。
    * format=tvbox 时发布为 TVBOX 客户端可直接订阅的 sites/lives 配置。
+   * 成人源处理（两格式一致，与本站成人规则对齐）：
+   * - 成人过滤开启（yellowFilter）→ 成人源不出导；
+   * - 未解锁（!adultUnlocked）→ 成人源在本站不可见，同样不出导（避免泄露隐藏源地址）；
+   *   仅「已解锁且过滤关闭」时才导出成人源——TVBOX 侧无本站的细粒度控制，源一旦给出即明文可用。
    */
   const publish = async (format: 'libretv' | 'tvbox' = 'libretv') => {
+    const adultExcluded = store.yellowFilter || !store.adultUnlocked;
     const seen = new Set<string>();
     const sources = store.selectedKeys
       .map((key) => resolveSource(store, key))
       .filter((s): s is SourceConfig => !!s && validateSourceUrl(s.url) && !isSourceDisabled(store, s.key))
+      .filter((s) => !(adultExcluded && s.isAdult))
       .filter((s) => {
         const u = s.url.replace(/\/+$/, '');
         if (seen.has(u)) return false;
@@ -675,7 +681,8 @@ function SourceSubscriptions() {
       const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources, format });
       setPublished(result);
       const formatLabel = format === 'tvbox' ? 'TVBOX 配置' : '本站订阅';
-      toast(`已发布${formatLabel} ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}`, 'success');
+      const adultNote = adultExcluded ? '（已按成人规则排除成人源）' : '';
+      toast(`已发布${formatLabel} ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}${adultNote}`, 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : '发布失败', 'error');
     } finally {
@@ -788,7 +795,7 @@ function SourceSubscriptions() {
             已发布到 {published.provider}（{published.format === 'tvbox' ? 'TVBOX 配置' : '本站订阅'}：
             {published.sources} 个点播源、{published.liveSources} 个直播源）。
             {published.format === 'tvbox'
-              ? '把该链接填入 TVBOX 客户端的配置地址即可使用。'
+              ? '把该链接填入 TVBOX 客户端的配置地址即可使用；成人源已按本站成人规则过滤——TVBOX 侧无细粒度过滤，源一旦给出即明文可用。'
               : '该链接可填入本站或其他 LibreTV 的订阅框。'}
             链接内容公开可读，粘贴板也可能随时清理——长期使用建议自行托管。
           </p>
