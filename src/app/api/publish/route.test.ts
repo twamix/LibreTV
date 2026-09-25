@@ -92,9 +92,51 @@ describe('POST /api/publish', () => {
     await expect(res.json()).resolves.toMatchObject({
       url: 'https://paste.rs/abc123',
       provider: 'paste.rs',
+      format: 'libretv',
       sources: 1,
       liveSources: 1,
     });
+  });
+
+  it('format=tvbox 时发布为 sites/lives 结构且本站订阅入口认得回来', async () => {
+    const res = await POST(
+      makeRequest({
+        format: 'tvbox',
+        sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod' }],
+        liveSources: [{ name: 'L', url: 'https://live.example.com/tv.m3u', epg: 'https://epg.example.com/e.xml' }],
+      })
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ format: 'tvbox', sources: 1, liveSources: 1 });
+
+    const published = state.publishedText ?? '';
+    const config = JSON.parse(published) as {
+      sites: { key: string; type: number; api: string }[];
+      lives: { name: string; type: number; url: string; epg?: string }[];
+    };
+    expect(config.sites).toHaveLength(1);
+    expect(config.sites[0]).toMatchObject({ key: 'A', type: 1, api: 'https://a.example.com/api.php/provide/vod' });
+    expect(config.lives).toHaveLength(1);
+    expect(config.lives[0]).toMatchObject({
+      name: 'L',
+      type: 0,
+      url: 'https://live.example.com/tv.m3u',
+      epg: 'https://epg.example.com/e.xml',
+    });
+    // 发布出去的不是本站格式，不应带 version/sources 顶层键
+    expect(published).not.toContain('"sources"');
+  });
+
+  it('format 非法时回落为本站格式', async () => {
+    const res = await POST(
+      makeRequest({
+        format: 'unknown-format',
+        sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod' }],
+      })
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ format: 'libretv' });
+    expect(state.publishedText ?? '').toContain('"version": 2');
   });
 
   it('发布器全部失败时返回 502 并透出原因', async () => {

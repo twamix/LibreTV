@@ -604,11 +604,12 @@ function SourceSubscriptions() {
   const { toast } = useToast();
   const [subUrl, setSubUrl] = useState('');
   const [syncing, setSyncing] = useState<string | null>(null);
-  // 发布状态：进行中 + 上一次的发布结果（链接、粘贴板来源与条数）
+  // 发布状态：进行中 + 上一次的发布结果（链接、粘贴板来源、格式与条数）
   const [publishing, setPublishing] = useState(false);
   const [published, setPublished] = useState<{
     url: string;
     provider: string;
+    format: 'libretv' | 'tvbox';
     sources: number;
     liveSources: number;
   } | null>(null);
@@ -639,8 +640,9 @@ function SourceSubscriptions() {
   /**
    * 发布当前「已勾选启用」的源：只把真正在参与搜索的源发出去
    * （未勾选的、以及被自动停用的都排除）。注意这与「导出数据源」的全量语义不同。
+   * format=tvbox 时发布为 TVBOX 客户端可直接订阅的 sites/lives 配置。
    */
-  const publish = async () => {
+  const publish = async (format: 'libretv' | 'tvbox' = 'libretv') => {
     const seen = new Set<string>();
     const sources = store.selectedKeys
       .map((key) => resolveSource(store, key))
@@ -670,9 +672,10 @@ function SourceSubscriptions() {
 
     setPublishing(true);
     try {
-      const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources });
+      const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources, format });
       setPublished(result);
-      toast(`已发布 ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}`, 'success');
+      const formatLabel = format === 'tvbox' ? 'TVBOX 配置' : '本站订阅';
+      toast(`已发布${formatLabel} ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}`, 'success');
     } catch (err) {
       toast(err instanceof Error ? err.message : '发布失败', 'error');
     } finally {
@@ -729,11 +732,19 @@ function SourceSubscriptions() {
           <div className="flex items-center gap-1.5">
             <button
               className="btn-ghost !py-1 !px-2.5 text-xs"
-              onClick={publish}
+              onClick={() => publish('libretv')}
               disabled={publishing}
               title="把当前已勾选启用的源上传到公开粘贴板，生成可直接订阅的链接"
             >
               {publishing ? '发布中…' : '发布为链接'}
+            </button>
+            <button
+              className="btn-ghost !py-1 !px-2.5 text-xs"
+              onClick={() => publish('tvbox')}
+              disabled={publishing}
+              title="把当前已勾选启用的源导出为 TVBOX 配置（sites/lives），上传到公开粘贴板后可直接填入 TVBOX 客户端订阅"
+            >
+              {publishing ? '发布中…' : '导出 TVBOX'}
             </button>
             <button
               className="btn-ghost !py-1 !px-2.5 text-xs"
@@ -774,7 +785,11 @@ function SourceSubscriptions() {
             </button>
           </div>
           <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
-            已发布到 {published.provider}（{published.sources} 个点播源、{published.liveSources} 个直播源）。
+            已发布到 {published.provider}（{published.format === 'tvbox' ? 'TVBOX 配置' : '本站订阅'}：
+            {published.sources} 个点播源、{published.liveSources} 个直播源）。
+            {published.format === 'tvbox'
+              ? '把该链接填入 TVBOX 客户端的配置地址即可使用。'
+              : '该链接可填入本站或其他 LibreTV 的订阅框。'}
             链接内容公开可读，粘贴板也可能随时清理——长期使用建议自行托管。
           </p>
         </div>

@@ -9,7 +9,7 @@ import { useAppStore, resolveSource } from '@/lib/store';
 import { useToast } from './toast';
 
 /**
- * 换源面板：跨源按标题搜索 → 匹配同名资源 → 并发测速（详情接口耗时）→ 按速度排序展示。
+ * 换源面板：跨源按标题搜索 → 匹配同名/同前缀资源 → 并发测速（详情接口耗时）→ 按速度排序展示。
  * 切换时保留当前集数索引（旧版 switchToResource 逻辑的去 DOM 化重写）。
  */
 
@@ -68,14 +68,19 @@ export function SwitchSourceModal({
       // 1) 并行搜索所有选中源
       setPhase('searching');
       try {
-        const { list } = await api.search(currentTitle, sources, false);
+        const { list } = await api.search(currentTitle, sources, store.yellowFilter);
         if (cancelled) return;
 
-        // 每个源取完全同名结果，否则取第一个
+        // 匹配口径：优先完全同名，其次名称以标题开头（兼容「小偷 HD」「小偷[电影解说]」这类修饰名）。
+        // 都没有则不展示该源——不再兜底取搜索第一条，避免把搜到的其他影片（如搜「小偷」
+        // 命中的《宝贝 小偷与大盗》）误当成换源目标。
+        const title = currentTitle.trim();
         const matched: Candidate[] = [];
         for (const s of sources) {
           const hits = list.filter((r) => r.sourceKey === s.key);
-          const exact = hits.find((r) => r.name === currentTitle) || hits[0];
+          const exact =
+            hits.find((r) => (r.name || '').trim() === title) ??
+            hits.find((r) => (r.name || '').trim().startsWith(title));
           if (exact) matched.push({ source: s, result: exact });
         }
 
@@ -105,7 +110,7 @@ export function SwitchSourceModal({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentTitle]);
+  }, [currentTitle, store.yellowFilter]);
 
   const sorted = [...candidates].sort((a, b) => {
     const aCurrent = a.source.key === currentSourceKey && String(a.result.vodId) === String(currentVodId);
