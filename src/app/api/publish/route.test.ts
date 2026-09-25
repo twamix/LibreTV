@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST } from './route';
 import { SESSION_COOKIE, signSession } from '@/lib/auth';
+import { publishSourceList } from '@/lib/source-list-publish';
 
 /**
  * 发布接口单测：登录守卫、字段白名单与条数上限。
@@ -34,6 +35,10 @@ function makeRequest(body: unknown, options?: { authenticated?: boolean }): Requ
   });
 }
 
+/** 记录每次发布调用的文本（tvbox-proxy 走两步发布：源列表 + TVBOX 配置） */
+const publishedTexts = (): string[] =>
+  (publishSourceList as unknown as { mock: { calls: string[][] } }).mock.calls.map((c) => c[0]);
+
 beforeAll(() => {
   process.env.PASSWORD = 'test-password';
 });
@@ -41,6 +46,7 @@ beforeAll(() => {
 beforeEach(() => {
   state.publishedText = null;
   state.fail = false;
+  vi.mocked(publishSourceList).mockClear();
 });
 
 describe('POST /api/publish', () => {
@@ -152,6 +158,70 @@ describe('POST /api/publish', () => {
     const published = state.publishedText ?? '';
     expect(published).toContain('a.example.com');
     expect(published).not.toContain('isAdult');
+  });
+
+  it('format=tvbox-proxy 时两步发布：源列表带 proxyToken，TVBOX 配置为单 proxy site + 直连 lives', async () => {
+    const res = await POST(
+      makeRequest({
+        format: 'tvbox-proxy',
+        sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod' }],
+        liveSources: [{ name: 'L', url: 'https://live.example.com/tv.m3u', epg: 'https://epg.example.com/e.xml' }],
+      })
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ format: 'tvbox-proxy', sources: 1, liveSources: 1 });
+
+    const texts = publishedTexts();
+    expect(texts).toHaveLength(2);
+    // 第一步：源列表（含 token，不含直播源——代理只聚点播）
+    const sourceList = JSON.parse(texts[0]) as { sources: { url: string }[]; liveSources: unknown[]; proxyToken: string };
+    expect(sourceList.sources).toHaveLength(1);
+    expect(sourceList.liveSources).toHaveLength(0);
+    expect(typeof sourceList.proxyToken).toBe('string');
+    expect(sourceList.proxyToken.length).toBeGreaterThanOrEqual(32);
+    // 第二步：TVBOX 配置——单 proxy site + 直连直播
+    const config = JSON.parse(texts[1]) as {
+      sites: { key: string; type: number; api: string }[];
+      lives: { name: string; type: number; url: string; epg?: string }[];
+    };
+    expect(config.sites).toHaveLength(1);
+    expect(config.sites[0].type).toBe(1);
+    const apiUrl = new URL(config.sites[0].api);
+    expect(`${apiUrl.origin}${apiUrl.pathname}`).toBe('https://local.test/api/tvbox/proxy');
+    expect(apiUrl.searchParams.get('token')).toBe(sourceList.proxyToken);
+    expect(apiUrl.searchParams.get('list')).toBe('https://paste.rs/abc123');
+    expect(config.lives).toHaveLength(1);
+    expect(config.lives[0]).toMatchObject({
+      name: 'L',
+      type: 0,
+      url: 'https://live.example.com/tv.m3u',
+      epg: 'https://epg.example.com/e.xml',
+    });
+  });
+
+  it('format=tvbox-proxy 无点播源时返回 400 且不触达粘贴板', async () => {
+    const res = await POST(
+      makeRequest({
+        format: 'tvbox-proxy',
+        sources: [],
+        liveSources: [{ name: 'L', url: 'https://live.example.com/tv.m3u' }],
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(publishSourceList).not.toHaveBeenCalled();
+  });
+
+  it('format=tvbox-proxy 只透出白名单字段，isAdult 不会进入源列表', async () => {
+    const res = await POST(
+      makeRequest({
+        format: 'tvbox-proxy',
+        sources: [{ name: 'A', url: 'https://a.example.com/api.php/provide/vod', isAdult: true }],
+      })
+    );
+    expect(res.status).toBe(200);
+    const texts = publishedTexts();
+    expect(texts[0]).toContain('a.example.com');
+    expect(texts[0]).not.toContain('isAdult');
   });
 
   it('发布器全部失败时返回 502 并透出原因', async () => {

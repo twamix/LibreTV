@@ -609,7 +609,7 @@ function SourceSubscriptions() {
   const [published, setPublished] = useState<{
     url: string;
     provider: string;
-    format: 'libretv' | 'tvbox';
+    format: 'libretv' | 'tvbox' | 'tvbox-proxy';
     sources: number;
     liveSources: number;
   } | null>(null);
@@ -640,13 +640,15 @@ function SourceSubscriptions() {
   /**
    * 发布当前「已勾选启用」的源：只把真正在参与搜索的源发出去
    * （未勾选的、以及被自动停用的都排除）。注意这与「导出数据源」的全量语义不同。
-   * format=tvbox 时发布为 TVBOX 客户端可直接订阅的 sites/lives 配置。
-   * 成人源处理（两格式一致，与本站成人规则对齐）：
+   * format=tvbox 时发布为 TVBOX 客户端可直接订阅的 sites/lives 配置；
+   * format=tvbox-proxy 时发布为家人用过滤代理（单 proxy site + 直播直连），
+   * 点播搜索走本站聚合代理并强制成人过滤。
+   * 成人源处理（三格式一致，与本站成人规则对齐）：
    * - 成人过滤开启（yellowFilter）→ 成人源不出导；
    * - 未解锁（!adultUnlocked）→ 成人源在本站不可见，同样不出导（避免泄露隐藏源地址）；
    *   仅「已解锁且过滤关闭」时才导出成人源——TVBOX 侧无本站的细粒度控制，源一旦给出即明文可用。
    */
-  const publish = async (format: 'libretv' | 'tvbox' = 'libretv') => {
+  const publish = async (format: 'libretv' | 'tvbox' | 'tvbox-proxy' = 'libretv') => {
     const adultExcluded = store.yellowFilter || !store.adultUnlocked;
     const seen = new Set<string>();
     const sources = store.selectedKeys
@@ -675,12 +677,17 @@ function SourceSubscriptions() {
       toast('没有已勾选启用的源可发布', 'warning');
       return;
     }
+    // 家人用代理聚的是点播源：没有点播源时配了也搜不出东西，直接拦下
+    if (format === 'tvbox-proxy' && sources.length === 0) {
+      toast('家人用代理需要至少一个点播源', 'warning');
+      return;
+    }
 
     setPublishing(true);
     try {
       const result = await api.publishSourceList({ name: 'LibreTV-SourceList', sources, liveSources, format });
       setPublished(result);
-      const formatLabel = format === 'tvbox' ? 'TVBOX 配置' : '本站订阅';
+      const formatLabel = format === 'tvbox-proxy' ? '家人用 TVBOX 代理' : format === 'tvbox' ? 'TVBOX 配置' : '本站订阅';
       const adultNote = adultExcluded ? '（已按成人规则排除成人源）' : '';
       toast(`已发布${formatLabel} ${result.sources} 个点播源、${result.liveSources} 个直播源到 ${result.provider}${adultNote}`, 'success');
     } catch (err) {
@@ -755,6 +762,14 @@ function SourceSubscriptions() {
             </button>
             <button
               className="btn-ghost !py-1 !px-2.5 text-xs"
+              onClick={() => publish('tvbox-proxy')}
+              disabled={publishing}
+              title="家人用：点播只导一个过滤代理站点（搜索走本站并强制成人过滤），直播仍直连；公用分享请用「导出 TVBOX」"
+            >
+              {publishing ? '发布中…' : '家人用 TVBOX'}
+            </button>
+            <button
+              className="btn-ghost !py-1 !px-2.5 text-xs"
               onClick={exportSources}
               disabled={
                 store.customAPIs.length + store.envSources.length + store.liveSubscriptions.length + store.liveEnvSources.length ===
@@ -792,11 +807,13 @@ function SourceSubscriptions() {
             </button>
           </div>
           <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
-            已发布到 {published.provider}（{published.format === 'tvbox' ? 'TVBOX 配置' : '本站订阅'}：
+            已发布到 {published.provider}（{published.format === 'tvbox-proxy' ? '家人用 TVBOX 代理' : published.format === 'tvbox' ? 'TVBOX 配置' : '本站订阅'}：
             {published.sources} 个点播源、{published.liveSources} 个直播源）。
-            {published.format === 'tvbox'
-              ? '把该链接填入 TVBOX 客户端的配置地址即可使用；成人源已按本站成人规则过滤——TVBOX 侧无细粒度过滤，源一旦给出即明文可用。'
-              : '该链接可填入本站或其他 LibreTV 的订阅框。'}
+            {published.format === 'tvbox-proxy'
+              ? '把该链接填入家里电视 TVBOX 客户端的配置地址即可使用；点播搜索走你的服务器并强制成人过滤（TVBOX 侧关不掉），直播仍直连。成人源已按本站成人规则过滤。'
+              : published.format === 'tvbox'
+                ? '把该链接填入 TVBOX 客户端的配置地址即可使用；成人源已按本站成人规则过滤——TVBOX 侧无细粒度过滤，源一旦给出即明文可用。'
+                : '该链接可填入本站或其他 LibreTV 的订阅框。'}
             链接内容公开可读，粘贴板也可能随时清理——长期使用建议自行托管。
           </p>
         </div>

@@ -167,10 +167,14 @@ export const api = {
     name?: string;
     sources: { name: string; url: string }[];
     liveSources: { name: string; url: string; epg?: string }[];
-    /** tvbox：发布为 TVBOX 客户端可直接订阅的 sites/lives 配置；缺省为本站格式 */
-    format?: 'libretv' | 'tvbox';
+    /**
+     * tvbox：发布为 TVBOX 客户端可直接订阅的 sites/lives 配置（逐源直连）；
+     * tvbox-proxy：家人用过滤代理（单 proxy site + 直播直连，搜索走本站强制过滤）；
+     * 缺省为本站格式
+     */
+    format?: 'libretv' | 'tvbox' | 'tvbox-proxy';
   }) =>
-    request<{ url: string; provider: string; format: 'libretv' | 'tvbox'; sources: number; liveSources: number }>('/api/publish', {
+    request<{ url: string; provider: string; format: 'libretv' | 'tvbox' | 'tvbox-proxy'; sources: number; liveSources: number }>('/api/publish', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

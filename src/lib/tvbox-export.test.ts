@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTvboxConfig } from './tvbox-export';
+import { buildTvboxConfig, buildTvboxProxyConfig } from './tvbox-export';
 import { isTvboxPayload, parseTvboxPayload } from './tvbox-parser';
 
 /**
@@ -76,4 +76,33 @@ describe('buildTvboxConfig', () => {
       epg: 'https://e.example.com/e.xml',
     });
   });
+});
+
+describe('buildTvboxProxyConfig', () => {
+  it('点播只放一个单 proxy site，直播仍直连 M3U', () => {
+    const config = buildTvboxProxyConfig('https://home.example.com/api/tvbox/proxy?list=https%3A%2F%2Fpaste.rs%2Fx&token=abc', [
+      { name: '频道表', url: 'https://l.example.com/tv.m3u', epg: 'https://e.example.com/e.xml' },
+    ]);
+    expect(config.sites).toHaveLength(1);
+    expect(config.sites[0]).toMatchObject({
+      key: 'LibreTV-家庭过滤',
+      type: 1,
+      searchable: 1,
+      quickSearch: 1,
+      filterable: 1,
+    });
+    expect(config.sites[0].api).toContain('/api/tvbox/proxy?list=');
+    expect(config.lives).toHaveLength(1);
+    expect(config.lives[0]).toMatchObject({ name: '频道表', type: 0, url: 'https://l.example.com/tv.m3u' });
+  });
+
+  it('单 proxy site 同样能被本站订阅入口认回来（往返校验不断）', () => {
+    const config = buildTvboxProxyConfig('https://home.example.com/api/tvbox/proxy?list=https%3A%2F%2Fpaste.rs%2Fx&token=abc', []);
+    expect(isTvboxPayload(JSON.parse(JSON.stringify(config)))).toBe(true);
+    const parsed = parseTvboxPayload(config);
+    // type=1 的直连 site 原样导入：往返不丢，发布链路的校验不断
+    expect(parsed.sources).toHaveLength(1);
+    expect(parsed.sources[0].url).toContain('/api/tvbox/proxy');
+  });
+
 });

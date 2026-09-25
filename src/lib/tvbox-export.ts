@@ -45,6 +45,39 @@ export interface TvboxConfig {
 }
 
 /**
+ * 家人用过滤代理配置：点播只放一个单 site，api 指向本站聚合代理；
+ * 直播仍是直连 M3U（代理不转直播流）。与 buildTvboxConfig 互斥使用。
+ * token 拼在 api 查询串里——TVBOX 客户端请求时原样带上，代理以此认证。
+ */
+export function buildTvboxProxyConfig(proxyApiUrl: string, liveSources: TvboxExportLive[]): TvboxConfig {
+  const lives: TvboxLive[] = liveSources.map((s) => {
+    const name = s.name.trim() || s.url;
+    const epg = s.epg?.trim();
+    return {
+      name,
+      type: 0,
+      url: s.url,
+      ...(epg ? { epg } : {}),
+    };
+  });
+
+  return {
+    sites: [
+      {
+        key: 'LibreTV-家庭过滤',
+        name: 'LibreTV-家庭过滤',
+        type: 1,
+        api: proxyApiUrl,
+        searchable: 1,
+        quickSearch: 1,
+        filterable: 1,
+      },
+    ],
+    lives,
+  };
+}
+
+/**
  * 由点播/直播源列表生成 TVBOX 配置对象。
  * key 取站点名（TVBOX 客户端内以 key 唯一标识），重名时追加 _2、_3 依次顺延；
  * name 为空时回落为地址，保证导出的 key/name 永不为空。

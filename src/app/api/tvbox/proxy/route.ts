@@ -1,0 +1,253 @@
+import { timingSafeEqual } from 'node:crypto';
+import { NextResponse } from 'next/server';
+import { isAdultContent } from '@/lib/cms-parser';
+import { resolveDetail } from '@/lib/detail-resolve';
+import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { aggregateOutcomes, searchSource } from '@/lib/search-aggregate';
+import { checkUpstreamAllowed } from '@/lib/ssrf';
+import { parseSubscriptionJson, parseSubscriptionPayload } from '@/lib/tvbox-parser';
+import type { SourceConfig } from '@/lib/types';
+
+export const runtime = 'nodejs';
+
+/**
+ * 家人用 TVBOX 过滤代理：把本站的聚合搜索伪装成一个 Apple CMS 单站，
+ * TVBOX 客户端只需订阅一个 site，搜索/详情全部走这台服务器——
+ * 成人过滤（关键词规则与本站一致）在服务端强制执行，TVBOX 侧关不掉。
+ *
+ * 协议（Apple CMS 子集）：
+ * - 搜索：`?list=<粘贴板URL>&token=...&ac=videolist&wd=关键词&pg=页码`
+ * - 详情：`?list=...&token=...&ac=videolist&ids=<编码id>`（ac=detail 同义）
+ *
+ * 认证：无登录态，token 即凭证（发布时写入源列表的 proxyToken，请求时原样带回）。
+ * 源列表跟粘贴板走（60s 缓存），发布后改源无需重新配电视。
+ * 直播不经过这里——TVBOX 配置里的 lives 仍是直连 M3U。
+ */
+
+const LIST_CACHE_TTL = 60 * 1000;
+const SEARCH_CACHE_TTL = 60 * 1000;
+/** 每页条数：CMS 惯例 20，TVBOX 按 pg 翻页 */
+const PAGE_LIMIT = 20;
+/** 限流：单链接每分钟 120 次（含搜索展开的多源 fan-out，家人用绰绰有余） */
+const RATE_LIMIT = 120;
+const RATE_WINDOW_MS = 60 * 1000;
+
+/** vod_id 编解码：`p<源序号>:<上游vodId>` → base64url，TVBOX 只当不透明字符串回传 */
+function encodeProxyId(sourceIndex: number, vodId: string): string {
+  return Buffer.from(`p${sourceIndex}:${vodId}`, 'utf8').toString('base64url');
+}
+
+function decodeProxyId(encoded: string): { sourceIndex: number; vodId: string } | null {
+  try {
+    const raw = Buffer.from(encoded, 'base64url').toString('utf8');
+    const m = /^p(\d+):([\s\S]*)$/.exec(raw);
+    if (!m || !m[2]) return null;
+    return { sourceIndex: parseInt(m[1], 10), vodId: m[2] };
+  } catch {
+    return null;
+  }
+}
+
+function timingSafeCompare(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+interface ProxySources {
+  sources: SourceConfig[];
+}
+
+/** 拉取并校验源列表：SSRF 校验 → 取 JSON → token 比对 → 转 SourceConfig（60s 缓存） */
+async function loadSources(listUrl: string, token: string): Promise<ProxySources | { error: string; status: number }> {
+  const cacheKey = `tvproxy:list:${listUrl}`;
+  const cached = getCache<{ sources: SourceConfig[]; proxyToken: string }>(cacheKey);
+  if (cached) {
+    if (!timingSafeCompare(token, cached.proxyToken)) {
+      return { error: 'token 无效', status: 403 };
+    }
+    return { sources: cached.sources };
+  }
+
+  const verdict = await checkUpstreamAllowed(listUrl);
+  if (!verdict.ok) {
+    return { error: verdict.reason, status: 400 };
+  }
+  let rawJson: unknown;
+  try {
+    const res = await fetchUpstream(listUrl, { timeoutMs: 8000, headers: { Accept: 'application/json' } });
+    if (!res.ok) {
+      return { error: `源列表地址返回 HTTP ${res.status}`, status: 502 };
+    }
+    rawJson = parseSubscriptionJson(await res.text());
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '源列表拉取失败', status: 502 };
+  }
+
+  const storedToken = (rawJson as { proxyToken?: unknown }).proxyToken;
+  if (typeof storedToken !== 'string' || !storedToken) {
+    return { error: '该订阅不是家人用代理配置', status: 400 };
+  }
+  if (!timingSafeCompare(token, storedToken)) {
+    return { error: 'token 无效', status: 403 };
+  }
+
+  let parsed;
+  try {
+    parsed = parseSubscriptionPayload(rawJson);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : '源列表格式不正确', status: 502 };
+  }
+  if (parsed.sources.length === 0) {
+    return { error: '源列表中没有可用点播源', status: 502 };
+  }
+  const sources: SourceConfig[] = parsed.sources.map((s, i) => ({ key: `proxy_${i}`, ...s }));
+  setCache(cacheKey, { sources, proxyToken: storedToken }, LIST_CACHE_TTL);
+  return { sources };
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const listUrl = (url.searchParams.get('list') || '').trim();
+  const token = (url.searchParams.get('token') || '').trim();
+  if (!listUrl || !token) {
+    return NextResponse.json({ error: '缺少 list 或 token 参数' }, { status: 401 });
+  }
+
+  // 先限流再干活：key 含 token，不同家人的链接互不干扰
+  const limited = checkRateLimit(`tvproxy:${token}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!limited.ok) {
+    return NextResponse.json(
+      { error: '请求过于频繁，请稍后再试' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil((limited.retryAfterMs ?? 60000) / 1000)) } }
+    );
+  }
+
+  const loaded = await loadSources(listUrl, token);
+  if ('error' in loaded) {
+    return NextResponse.json({ error: loaded.error }, { status: loaded.status });
+  }
+  const { sources } = loaded;
+
+  const ac = (url.searchParams.get('ac') || '').trim().toLowerCase();
+  if (ac === 'videolist' || ac === 'detail') {
+    // 详情优先：带 ids 参数时走详情（TVBOX 点播必经）
+    const ids = (url.searchParams.get('ids') || '').trim();
+    if (ids) return await handleDetail(ids, sources);
+    // 否则走搜索
+    const wd = (url.searchParams.get('wd') || '').trim();
+    if (wd) return await handleSearch(wd, url.searchParams.get('pg'), sources, listUrl, token);
+    return NextResponse.json({ error: '缺少 wd 或 ids 参数' }, { status: 400 });
+  }
+  return NextResponse.json({ error: '不支持的 ac 参数（仅支持 videolist / detail）' }, { status: 400 });
+}
+
+/** 聚合搜索 → CMS 列表形状。成人过滤强制开启，与本站规则同一套。 */
+async function handleSearch(
+  wd: string,
+  pgRaw: string | null,
+  sources: SourceConfig[],
+  listUrl: string,
+  token: string
+): Promise<NextResponse> {
+  if (wd.length > 100) {
+    return NextResponse.json({ error: '搜索关键词过长' }, { status: 400 });
+  }
+  const pg = Math.min(50, Math.max(1, parseInt(pgRaw || '1', 10) || 1));
+
+  const cacheKey = `tvproxy:search:${listUrl}\n${token}\n${wd}`;
+  let full = getCache<{ total: number; items: { vodId: string; name: string; pic?: string; typeName?: string; year?: string; area?: string; remarks?: string }[] }>(cacheKey);
+  if (!full) {
+    const outcomes = await Promise.all(sources.map((s) => searchSource(s, wd)));
+    // filterAdult 恒为 true：代理存在的意义就是这行，TVBOX 侧无法关闭
+    const payload = aggregateOutcomes(outcomes, wd, true);
+    const items = payload.list.map((item) => ({
+      vodId: encodeProxyId(sources.findIndex((s) => s.key === item.sourceKey), item.vodId),
+      name: item.name,
+      pic: item.pic,
+      typeName: item.typeName,
+      year: item.year,
+      area: item.area,
+      remarks: item.remarks,
+    }));
+    full = { total: items.length, items };
+    setCache(cacheKey, full, SEARCH_CACHE_TTL);
+  }
+
+  const pagecount = Math.max(1, Math.ceil(full.total / PAGE_LIMIT));
+  const pageItems = full.items.slice((pg - 1) * PAGE_LIMIT, pg * PAGE_LIMIT);
+  return NextResponse.json({
+    code: 1,
+    msg: '数据列表',
+    page: pg,
+    pagecount,
+    limit: PAGE_LIMIT,
+    total: full.total,
+    list: pageItems.map((item) => ({
+      vod_id: item.vodId,
+      vod_name: item.name,
+      vod_pic: item.pic ?? '',
+      type_name: item.typeName ?? '',
+      vod_year: item.year ?? '',
+      vod_area: item.area ?? '',
+      vod_remarks: item.remarks ?? '',
+    })),
+  });
+}
+
+/** 详情 → CMS 详情形状，vod_play_url 按「线路$$$第N集$地址」拼装；成人分类二次拦截。 */
+async function handleDetail(ids: string, sources: SourceConfig[]): Promise<NextResponse> {
+  // TVBOX 一次只点一部，多个 id 时取首个
+  const first = ids.split(',')[0].trim();
+  const decoded = decodeProxyId(first);
+  if (!decoded || decoded.sourceIndex < 0 || decoded.sourceIndex >= sources.length) {
+    return NextResponse.json({ error: '无效的视频ID' }, { status: 400 });
+  }
+  const source = sources[decoded.sourceIndex];
+
+  let detail;
+  try {
+    const resolved = await resolveDetail(decoded.vodId, source);
+    if (!resolved.ok) {
+      if (resolved.blocked) {
+        return NextResponse.json({ error: resolved.blocked }, { status: 400 });
+      }
+      return NextResponse.json({ error: '未找到播放资源' }, { status: 404 });
+    }
+    detail = resolved.detail;
+  } catch (err) {
+    return NextResponse.json({ error: err instanceof Error ? err.message : '获取详情失败' }, { status: 502 });
+  }
+
+  // 二次拦截：详情返回的分类若命中成人关键词，直接 404（搜索页 type_name 缺失时的兜底）
+  if (isAdultContent(detail.videoInfo.typeName)) {
+    return NextResponse.json({ error: '未找到播放资源' }, { status: 404 });
+  }
+
+  const playUrl = `LibreTV-家庭过滤$$$${detail.episodes.map((ep, i) => `第${i + 1}集$${ep}`).join('#')}`;
+  return NextResponse.json({
+    code: 1,
+    msg: '数据列表',
+    page: 1,
+    pagecount: 1,
+    limit: 1,
+    total: 1,
+    list: [
+      {
+        vod_id: first,
+        vod_name: detail.videoInfo.title ?? '',
+        vod_pic: detail.videoInfo.cover ?? '',
+        type_name: detail.videoInfo.typeName ?? '',
+        vod_year: detail.videoInfo.year ?? '',
+        vod_area: detail.videoInfo.area ?? '',
+        vod_actor: detail.videoInfo.actor ?? '',
+        vod_director: detail.videoInfo.director ?? '',
+        vod_content: detail.videoInfo.desc ?? '',
+        vod_remarks: detail.videoInfo.remarks ?? '',
+        vod_play_url: playUrl,
+      },
+    ],
+  });
+}
