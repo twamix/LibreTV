@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie';
 import type { SourceConfig } from './types';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
+import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
 
 /**
  * IndexedDB 持久化（替代旧版 localStorage 数据库）：
@@ -169,13 +170,15 @@ export async function clearLiveProbeResultsDb(): Promise<void> {
 // —— 配置导入导出（兼容旧版 LibreTV-Settings JSON 结构的导出格式） ——
 
 export async function exportConfig(): Promise<string> {
+  // 导出前 flush：把节流缓冲中的最新设置落盘，避免导出的是 800ms 前的旧快照
+  flushPendingPersist();
   const history = await db.history.toArray();
-  const settings = localStorage.getItem('libretv-settings');
+  const settings = localStorage.getItem(PERSIST_KEY);
 
   const data: Record<string, unknown> = {
     viewingHistory: JSON.stringify(history),
   };
-  if (settings) data['libretv-settings'] = settings;
+  if (settings) data[PERSIST_KEY] = settings;
 
   return JSON.stringify({
     name: 'LibreTV-Settings',
@@ -193,8 +196,11 @@ export async function importConfig(content: string): Promise<void> {
   if (config.name !== 'LibreTV-Settings') throw new Error('配置文件格式不正确');
   const data = config.data || {};
 
-  if (typeof data['libretv-settings'] === 'string') {
-    localStorage.setItem('libretv-settings', data['libretv-settings']);
+  if (typeof data[PERSIST_KEY] === 'string') {
+    // 关键：先 flush 节流缓冲中的旧状态再写导入配置，否则缓冲会在
+    // 之后 flush 时用导入前的旧状态覆盖刚写入的配置（导入静默丢失）
+    flushPendingPersist();
+    localStorage.setItem(PERSIST_KEY, data[PERSIST_KEY]);
   }
 
   if (typeof data['viewingHistory'] === 'string') {
@@ -221,12 +227,12 @@ export async function importConfig(content: string): Promise<void> {
 }
 
 export function saveSettingsToLocalStorage(settings: unknown): void {
-  localStorage.setItem('libretv-settings', JSON.stringify(settings));
+  localStorage.setItem(PERSIST_KEY, JSON.stringify(settings));
 }
 
 export function loadSettingsFromLocalStorage<T>(): T | undefined {
   try {
-    const raw = localStorage.getItem('libretv-settings');
+    const raw = localStorage.getItem(PERSIST_KEY);
     return raw ? (JSON.parse(raw) as T) : undefined;
   } catch {
     return undefined;

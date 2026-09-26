@@ -15,13 +15,10 @@ interface SearchBody {
 /** 搜索结果短缓存：同一关键词 + 同一组源在 TTL 内直接返回（播放页返回搜索页等场景） */
 const SEARCH_CACHE_TTL = 60 * 1000;
 
-/** 缓存键：wd + 成人过滤 + 排序后的源地址集合 */
+/** 缓存键：wd + 成人过滤 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
 function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolean): string {
   const urls = sources.map((s) => s.url.replace(/\/+$/, '')).sort().join('|');
-  let h = 5381;
-  const str = `${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
-  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) >>> 0;
-  return `search:${h.toString(36)}`;
+  return `search:${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
 }
 
 /**

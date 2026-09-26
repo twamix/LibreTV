@@ -1,9 +1,10 @@
 'use client';
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist } from 'zustand/middleware';
 import type { SourceConfig, LiveSourceConfig, SourceSearchOutcome } from './types';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
+import { PERSIST_KEY, createThrottledStorage } from './persist-storage';
 import { api, ApiError } from './client-api';
 
 /**
@@ -658,7 +659,9 @@ export const useAppStore = create<AppState>()(
       },
     }),
     {
-      name: 'libretv-settings',
+      name: PERSIST_KEY,
+      // 节流写入：搜索 / 测活等高频 set 不再每次都整份序列化写盘
+      storage: createJSONStorage(createThrottledStorage),
       // v1：直播源新增 fromSubscription 归属字段、最近观看新增 sourceUrl。
       // 此前未声明 version，存量数据会被视为 v0 并走 migrate 补齐（缺失字段按「手动添加」处理）。
       version: 1,
