@@ -12,8 +12,9 @@ import type { SearchResponse, SourceConfig, SourceSearchOutcome } from './types'
  * 每个源最多抓取的页数（参考 LunaTV 的 SearchDownstreamMaxPage）。
  * 第一页响应会带回 pagecount（源站真实总页数），实际抓取页数 = min(pagecount, 该值)。
  * 默认 5；页与页之间并行请求，单页失败只丢弃该页。
+ * 导出给 TVBOX 代理用：电视端首屏只抓 1 页提速，翻页时再按需抓深。
  */
-const SEARCH_MAX_PAGES = (() => {
+export const SEARCH_MAX_PAGES = (() => {
   const n = parseInt(process.env.SEARCH_MAX_PAGES || '5', 10);
   if (!Number.isFinite(n)) return 5;
   return Math.min(50, Math.max(1, n));
@@ -42,7 +43,7 @@ function isTimeoutError(err: unknown): boolean {
  * 整源受 SEARCH_SOURCE_TIMEOUT_MS 总死线约束。
  * 旧版在浏览器里打满 N 个请求（暴露用户 IP、无法缓存、超时失控），现全部上移。
  */
-export async function searchSource(source: SourceConfig, wd: string): Promise<SourceSearchOutcome> {
+export async function searchSource(source: SourceConfig, wd: string, maxPages = SEARCH_MAX_PAGES): Promise<SourceSearchOutcome> {
   const start = Date.now();
   const finish = (outcome: Omit<SourceSearchOutcome, 'ms'>): SourceSearchOutcome => ({
     ...outcome,
@@ -93,7 +94,10 @@ export async function searchSource(source: SourceConfig, wd: string): Promise<So
     const list = parseSearchList(first, source);
     // 源站真实总页数与配置上限取较小者；pagecount 缺失或非法时视为 1 页
     const rawPageCount = parseInt(String((first as { pagecount?: unknown }).pagecount ?? '1'), 10);
-    const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, SEARCH_MAX_PAGES);
+    const pageCount = Math.min(
+      Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1,
+      Math.min(50, Math.max(1, maxPages))
+    );
     if (pageCount > 1) {
       const extraPages = await Promise.all(
         Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async (page) => {

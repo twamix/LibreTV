@@ -112,6 +112,29 @@ describe('GET /api/tvbox/proxy', () => {
     expect(res.status).toBe(400);
   });
 
+  it('ac=list 返回空分类（TVBOX 分类请求不报错）', async () => {
+    const res = await GET(makeRequest({ list: listUrl, token: TOKEN, ac: 'list' }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { code: number; class: unknown[]; list: unknown[] };
+    expect(json.code).toBe(1);
+    expect(json.class).toEqual([]);
+    expect(json.list).toEqual([]);
+  });
+
+  it('无 ac 无 wd 时返回首页聚合（TVBOX 进站首屏不再空白）', async () => {
+    state.searchOutcome = searchOutcomeWith([
+      { vodId: '100', name: '正片', typeName: '动作片' },
+      { vodId: '200', name: '坏东西', typeName: '伦理片' },
+    ]);
+    const res = await GET(makeRequest({ list: listUrl, token: TOKEN }));
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { code: number; total: number; list: { vod_name: string }[] };
+    expect(json.code).toBe(1);
+    // 空关键词不过相关性过滤，上游最新直接展示；成人条目仍被强制过滤
+    expect(json.total).toBe(1);
+    expect(json.list[0].vod_name).toBe('正片');
+  });
+
   it('搜索返回 CMS 形状：成人条目被强制过滤，vod_id 可解回源序号与上游 id', async () => {
     state.searchOutcome = searchOutcomeWith([
       { vodId: '100', name: '正片', typeName: '动作片' },

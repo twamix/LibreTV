@@ -4,11 +4,11 @@ import { isAdultContent } from '@/lib/cms-parser';
 import { resolveDetail } from '@/lib/detail-resolve';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { aggregateOutcomes, searchSource } from '@/lib/search-aggregate';
+import { aggregateOutcomes, SEARCH_MAX_PAGES, searchSource } from '@/lib/search-aggregate';
 import { extractShareId, getShareText } from '@/lib/share-store';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import { parseSubscriptionJson, parseSubscriptionPayload } from '@/lib/tvbox-parser';
-import type { SourceConfig } from '@/lib/types';
+import type { SourceConfig, SourceSearchOutcome } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
@@ -18,6 +18,8 @@ export const runtime = 'nodejs';
  * 成人过滤（关键词规则与本站一致）在服务端强制执行，TVBOX 侧关不掉。
  *
  * 协议（Apple CMS 子集）：
+ * - 首页：`?list=...&token=...&ac=videolist&pg=页码`（无 wd，空关键词搜上游最新列表给 TVBOX 首页用）
+ * - 分类：`?list=...&token=...&ac=list`（暂无真实分类，返回空分类避免客户端报错）
  * - 搜索：`?list=<本站分享URL或id>&token=...&ac=videolist&wd=关键词&pg=页码`
  * - 详情：`?list=...&token=...&ac=videolist&ids=<编码id>`（ac=detail 同义）
  *
@@ -29,6 +31,12 @@ export const runtime = 'nodejs';
 
 const LIST_CACHE_TTL = 60 * 1000;
 const SEARCH_CACHE_TTL = 60 * 1000;
+/**
+ * 上游搜索并发数：家中电视的弱网环境下，6 源齐发常被路由器逐个 RST，
+ * 收敛到 2 个一批更稳。TVBOX 单站搜索通常只等 5~8 秒，2 并发 × 首轮 1 页
+ * 一般 2~3 秒能回，足够进电视的超时窗口。
+ */
+const SEARCH_CONCURRENCY = 2;
 /** 每页条数：CMS 惯例 20，TVBOX 按 pg 翻页 */
 const PAGE_LIMIT = 20;
 /** 限流：单链接每分钟 120 次（含搜索展开的多源 fan-out，家里电视用绰绰有余） */
@@ -153,16 +161,34 @@ export async function GET(req: Request) {
   const { sources } = loaded;
 
   const ac = (url.searchParams.get('ac') || '').trim().toLowerCase();
-  if (ac === 'videolist' || ac === 'detail') {
+  // 部分 TVBOX 进站不带任何参数先拉一次首页：无 wd 时用空关键词走聚合，
+  // 空关键词不过相关性过滤（isRelevant 恒真），各源最新列表直接展示，站内不再空白
+  if (!ac || ac === 'videolist' || ac === 'detail' || ac === 'list') {
     // 详情优先：带 ids 参数时走详情（TVBOX 点播必经）
     const ids = (url.searchParams.get('ids') || '').trim();
     if (ids) return await handleDetail(ids, sources);
-    // 否则走搜索
+    // 分类请求：暂无真实分类，返回空分类避免客户端报错
+    if (ac === 'list') {
+      return NextResponse.json({ code: 1, msg: '数据列表', page: 1, pagecount: 0, limit: PAGE_LIMIT, total: 0, list: [], class: [] });
+    }
     const wd = (url.searchParams.get('wd') || '').trim();
-    if (wd) return await handleSearch(wd, url.searchParams.get('pg'), sources, listUrl, token);
-    return NextResponse.json({ error: '缺少 wd 或 ids 参数' }, { status: 400 });
+    return await handleSearch(wd, url.searchParams.get('pg'), sources, listUrl, token);
   }
   return NextResponse.json({ error: '不支持的 ac 参数（仅支持 videolist / detail）' }, { status: 400 });
+}
+
+/** 分批搜上游：每批 SEARCH_CONCURRENCY 个，避免弱网下全量齐发被 RST；失败的源记失败不影响其余 */
+async function searchBatched(
+  sources: SourceConfig[],
+  wd: string,
+  maxPages: number
+): Promise<SourceSearchOutcome[]> {
+  const outcomes: SourceSearchOutcome[] = [];
+  for (let i = 0; i < sources.length; i += SEARCH_CONCURRENCY) {
+    const batch = await Promise.all(sources.slice(i, i + SEARCH_CONCURRENCY).map((s) => searchSource(s, wd, maxPages)));
+    outcomes.push(...batch);
+  }
+  return outcomes;
 }
 
 /** 聚合搜索 → CMS 列表形状。成人过滤强制开启，与本站规则同一套。 */
@@ -181,7 +207,9 @@ async function handleSearch(
   const cacheKey = `tvproxy:search:${listUrl}\n${token}\n${wd}`;
   let full = getCache<{ total: number; items: { vodId: string; name: string; pic?: string; typeName?: string; year?: string; area?: string; remarks?: string }[] }>(cacheKey);
   if (!full) {
-    const outcomes = await Promise.all(sources.map((s) => searchSource(s, wd)));
+    // TVBOX 单站搜索通常只等 5~8 秒：首轮只抓各源第 1 页（2 并发分批），
+    // 2~3 秒先回第一屏给电视；后续翻页（pg>1）再按需抓深页补齐
+    const outcomes = await searchBatched(sources, wd, pg > 1 ? SEARCH_MAX_PAGES : 1);
     // filterAdult 恒为 true：代理存在的意义就是这行，TVBOX 侧无法关闭
     const payload = aggregateOutcomes(outcomes, wd, true);
     const items = payload.list.map((item) => ({
