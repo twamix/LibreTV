@@ -782,7 +782,7 @@ function SourceSubscriptions() {
         }
       />
 
-      {/* 发布结果：链接持有者可读、服务重启后快照丢失需重发，这些说明直接写在这里而不是只在 toast 里闪一下 */}
+      {/* 发布结果：只保留链接与操作按钮 */}
       {published && (
         <div className="mb-3 rounded-lg border border-line bg-chip/60 p-2.5">
           <div className="flex items-center gap-1.5">
@@ -806,16 +806,6 @@ function SourceSubscriptions() {
               直接订阅
             </button>
           </div>
-          <p className="mt-1.5 text-[11px] text-faint leading-relaxed">
-            已发布到 {published.provider}（{published.format === 'tvbox-proxy' ? '家庭过滤版' : published.format === 'tvbox' ? '常规 TVBOX 配置' : '本站订阅'}：
-            {published.sources} 个点播源、{published.liveSources} 个直播源）。
-            {published.format === 'tvbox-proxy'
-              ? '把该链接填入家里电视 TVBOX 客户端的配置地址即可使用；点播搜索走你的服务器并强制成人过滤（TVBOX 侧关不掉），直播仍直连。成人源已按本站成人规则过滤。'
-              : published.format === 'tvbox'
-                ? '把该链接填入 TVBOX 客户端的配置地址即可使用；成人源已按本站成人规则过滤——TVBOX 侧无细粒度过滤，源一旦给出即明文可用。'
-                : '该链接可填入本站或其他 LibreTV 的订阅框。'}
-            链接内容只存你的服务器、不走第三方，知道链接的人可读取；服务重启后需重新发布。
-          </p>
         </div>
       )}
       <div className="flex gap-2 mb-2">
@@ -832,11 +822,7 @@ function SourceSubscriptions() {
           订阅
         </button>
       </div>
-      {store.subscriptions.length === 0 ? (
-        <p className="text-xs text-faint">
-          一份订阅可同时下发点播源与直播源；「导出数据源」生成的 JSON 托管到任意 URL 即可分享给他人订阅。
-        </p>
-      ) : (
+      {store.subscriptions.length === 0 ? null : (
         <ul className="space-y-2 max-h-[30vh] overflow-y-auto scrollbar-thin pr-1">
           {store.subscriptions.map((sub) => {
             const vodCount = store.customAPIs.filter((a) => keyBelongsToSubscription(a.key, subKeyPrefix(sub.url))).length;
