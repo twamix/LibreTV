@@ -246,7 +246,7 @@ async function handleSearch(
   });
 }
 
-/** 详情 → CMS 详情形状，vod_play_url 按「线路$$$第N集$地址」拼装；成人分类二次拦截。 */
+/** 详情 → CMS 详情形状，线路名放 vod_play_from、集数串放 vod_play_url；成人分类二次拦截。 */
 async function handleDetail(ids: string, sources: SourceConfig[]): Promise<NextResponse> {
   // TVBOX 一次只点一部，多个 id 时取首个
   const first = ids.split(',')[0].trim();
@@ -275,7 +275,11 @@ async function handleDetail(ids: string, sources: SourceConfig[]): Promise<NextR
     return NextResponse.json({ error: '未找到播放资源' }, { status: 404 });
   }
 
-  const playUrl = `LibreTV-家庭过滤$$$${detail.episodes.map((ep, i) => `第${i + 1}集$${ep}`).join('#')}`;
+  // 标准 CMS 详情形状：线路名放独立的 vod_play_from，集数串放 vod_play_url，
+  // 两字段按 $$$ 配对（单线路时各一段）。之前把线路名塞进 vod_play_url 里，
+  // 多数 TVBOX 客户端解析不到线路直接报「无线路数据」。
+  const playFrom = 'LibreTV-家庭过滤';
+  const playUrl = detail.episodes.map((ep, i) => `第${i + 1}集$${ep}`).join('#');
   return NextResponse.json({
     code: 1,
     msg: '数据列表',
@@ -295,6 +299,7 @@ async function handleDetail(ids: string, sources: SourceConfig[]): Promise<NextR
         vod_director: detail.videoInfo.director ?? '',
         vod_content: detail.videoInfo.desc ?? '',
         vod_remarks: detail.videoInfo.remarks ?? '',
+        vod_play_from: playFrom,
         vod_play_url: playUrl,
       },
     ],

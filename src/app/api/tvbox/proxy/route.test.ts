@@ -186,17 +186,18 @@ describe('GET /api/tvbox/proxy', () => {
     expect(second.list).toHaveLength(5);
   });
 
-  it('详情：vod_play_url 按「线路$$$第N集$地址」拼装', async () => {
+  it('详情：线路名放 vod_play_from，集数串放 vod_play_url（TVBOX 按 $$$ 配对解析）', async () => {
     state.searchOutcome = searchOutcomeWith([{ vodId: '100', name: '正片', typeName: '动作片' }]);
     const search = (await (
       await GET(makeRequest({ list: listUrl, token: TOKEN, ac: 'videolist', wd: '正片' }))
     ).json()) as { list: { vod_id: string }[] };
     const res = await GET(makeRequest({ list: listUrl, token: TOKEN, ac: 'videolist', ids: search.list[0].vod_id }));
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { list: { vod_play_url: string; vod_name: string }[] };
+    const json = (await res.json()) as { list: { vod_play_from: string; vod_play_url: string; vod_name: string }[] };
     expect(json.list[0].vod_name).toBe('正片');
+    expect(json.list[0].vod_play_from).toBe('LibreTV-家庭过滤');
     expect(json.list[0].vod_play_url).toBe(
-      'LibreTV-家庭过滤$$$第1集$https://cdn.example.com/1.m3u8#第2集$https://cdn.example.com/2.m3u8'
+      '第1集$https://cdn.example.com/1.m3u8#第2集$https://cdn.example.com/2.m3u8'
     );
   });
 
