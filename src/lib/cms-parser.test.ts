@@ -63,6 +63,24 @@ describe('extractEpisodesFromPlayUrl', () => {
   it('空输入返回空数组', () => {
     expect(extractEpisodesFromPlayUrl('')).toEqual([]);
   });
+
+  it('第一条线路为中转页时优先取 m3u8 线路', () => {
+    const play = '中转$https://player.example.com/go?id=1$$$正片$https://cdn/b1.m3u8#第02集$https://cdn/b2.m3u8';
+    expect(extractEpisodesFromPlayUrl(play)).toEqual([
+      'https://cdn/b1.m3u8',
+      'https://cdn/b2.m3u8',
+    ]);
+  });
+
+  it('第一条线路为空时取后续有效线路', () => {
+    const play = '$$$正片$https://cdn/b1.m3u8';
+    expect(extractEpisodesFromPlayUrl(play)).toEqual(['https://cdn/b1.m3u8']);
+  });
+
+  it('两条线路均无 m3u8 时回退第一条', () => {
+    const play = '线路一$https://a/1.mp4$$$线路二$https://b/2.mp4';
+    expect(extractEpisodesFromPlayUrl(play)).toEqual(['https://a/1.mp4']);
+  });
 });
 
 describe('extractM3u8FromText', () => {

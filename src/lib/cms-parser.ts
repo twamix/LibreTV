@@ -46,17 +46,29 @@ export function parseSearchList(
   });
 }
 
-/** 从 vod_play_url 中提取分集地址：格式 源1$$$源2，集1$URL1#集2$URL2 */
+/**
+ * 从 vod_play_url 中提取分集地址：格式 源1$$$源2，集1$URL1#集2$URL2。
+ *
+ * 逐线路取地址后**优先返回含 .m3u8 的线路**：部分源站（量子/非凡类）第一条
+ * 线路是中转页/落地页，只有后续线路才是可直接播放的 m3u8，取首组会出现
+ * 「搜索有结果、播放无线路数据」；两条线路都没有 m3u8 时回退第一条。
+ */
 export function extractEpisodesFromPlayUrl(playUrl: string): string[] {
   if (!playUrl) return [];
-  const firstSource = playUrl.split('$$$')[0] ?? '';
-  return firstSource
-    .split('#')
-    .map((ep) => {
-      const parts = ep.split('$');
-      return parts.length > 1 ? parts[1] : '';
-    })
-    .filter((url) => url.startsWith('http://') || url.startsWith('https://'));
+  const groups = playUrl
+    .split('$$$')
+    .map((group) =>
+      group
+        .split('#')
+        .map((ep) => {
+          const parts = ep.split('$');
+          return parts.length > 1 ? parts[1] : '';
+        })
+        .filter((url) => url.startsWith('http://') || url.startsWith('https://'))
+    )
+    .filter((eps) => eps.length > 0);
+  if (groups.length === 0) return [];
+  return groups.find((eps) => eps.some((url) => url.includes('.m3u8'))) ?? groups[0];
 }
 
 /** 从简介文本中兜底提取 m3u8 链接 */
