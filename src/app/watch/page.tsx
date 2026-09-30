@@ -7,6 +7,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { PlayerShell } from '@/components/player-shell';
 import { SwitchSourceModal } from '@/components/switch-source';
+import { enqueueDownload } from '@/components/download-manager';
+import { Icon } from '@/components/icon';
 import { useAuth } from '@/components/auth';
 import { resolveSource, useAppStore } from '@/lib/store';
 import {
@@ -190,6 +192,7 @@ function WatchContent() {
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-3">
           <BackButton />
+          <HomeButton />
           <div className="min-w-0">
             <h1 className="text-sm font-medium text-content truncate">{videoTitle}</h1>
             <p className="text-xs text-faint">
@@ -198,6 +201,22 @@ function WatchContent() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <button
+              className="btn-ghost !py-1.5 text-xs"
+              onClick={() => {
+                if (!currentUrl) return;
+                enqueueDownload({
+                  url: currentUrl,
+                  // 多集才带集数后缀；单集影片（含电影）文件名就是纯标题
+                  title: `${videoTitle}${episodes.length > 1 ? ` 第${currentIndex + 1}集` : ''}`,
+                  format: 'MP4',
+                });
+                // 「已加入下载队列」由 DownloadManager 在真正入队后提示：
+                // 这里先提示的话，用户随后取消保存位置会出现「已加入→已取消」的矛盾
+              }}
+            >
+              下载本集
+            </button>
             <button className="btn-ghost !py-1.5 text-xs" onClick={() => setSwitchOpen(true)}>
               切换资源
             </button>
@@ -361,5 +380,19 @@ function BackButton() {
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
       </svg>
     </button>
+  );
+}
+
+/** 首页按钮：直达首页，避免从外链进入时逐级 back */
+function HomeButton() {
+  return (
+    <Link
+      href="/"
+      className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      aria-label="回首页"
+      title="回首页"
+    >
+      <Icon name="home" className="w-5 h-5" />
+    </Link>
   );
 }

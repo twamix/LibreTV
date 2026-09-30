@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Drawer } from './header';
 import {
   allLiveSources,
@@ -20,6 +20,7 @@ import { useAuth } from './auth';
 import { api } from '@/lib/client-api';
 import { syncSourceSubscription } from '@/lib/subscription-sync';
 import { describeParseStats } from '@/lib/tvbox-parser';
+import { clearVideoCache, getCacheSummary, loadCacheSettings, saveCacheSettings, type CacheSummary } from '@/lib/video-cache';
 import { LiveSourceManager } from './live-source-manager';
 import type { SourceConfig } from '@/lib/types';
 import { FilterTabs, VOD_FILTERS, type VodFilter } from './filter-tabs';
@@ -445,6 +446,11 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
             onChange={(v) => store.updateSettings({ autoplayNext: v })}
           />
         </div>
+      </section>
+
+      <section className="mb-6 border-t border-line pt-5">
+        <SectionTitle title="片段本地缓存" />
+        <VideoCachePanel />
       </section>
 
       <section className="mb-6 border-t border-line pt-5">
@@ -1000,6 +1006,59 @@ function SourceForm({
         </button>
         <button className="btn-primary !py-1 text-xs" onClick={submit}>
           {initial ? '更新' : '添加'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 片段缓存：开启/关闭 + 用量展示 + 清理（数据在浏览器本地，独立于配置导出） */
+function VideoCachePanel() {
+  const [enabled, setEnabled] = useState(() => loadCacheSettings().enabled);
+  const [summary, setSummary] = useState<CacheSummary>({ segments: 0, bytes: 0, episodes: 0 });
+  const [clearing, setClearing] = useState(false);
+
+  const refresh = useCallback(() => {
+    void getCacheSummary().then(setSummary);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(0)} MB`;
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  };
+
+  return (
+    <div className="space-y-3">
+      <ToggleRow
+        label="片段本地缓存"
+        description="暂停或观看时把后续分片缓存到浏览器本地，二次播放与断网卡顿时直接命中（存储于本机，不计入配置导出）"
+        checked={enabled}
+        onChange={(v) => {
+          const next = saveCacheSettings({ enabled: v });
+          setEnabled(next.enabled);
+        }}
+      />
+      <div className="flex items-center justify-between text-xs text-faint">
+        <span>
+          已缓存 {summary.segments} 个分片 · {formatBytes(summary.bytes)} · {summary.episodes} 集
+        </span>
+        <button
+          type="button"
+          className="px-2 py-1 rounded bg-chip text-content hover:bg-hover transition-colors disabled:opacity-50"
+          disabled={clearing || summary.segments === 0}
+          onClick={async () => {
+            setClearing(true);
+            await clearVideoCache();
+            refresh();
+            setClearing(false);
+          }}
+        >
+          清理缓存
         </button>
       </div>
     </div>

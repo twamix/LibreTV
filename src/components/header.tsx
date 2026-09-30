@@ -1,12 +1,14 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from './theme';
 import { SourceManagerDrawer } from './source-manager';
 import { HistoryPanel } from './history-panel';
 import { SearchHistoryDropdown, useSearchHistory } from './search-history';
+import { Icon } from './icon';
+import { requestShowDownloadManager } from './download-manager';
 import { cn } from '@/lib/utils';
 
 /** 顶部导航：Logo、搜索框（首页外）、历史、设置 */
@@ -99,6 +101,9 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
               直播
             </HeaderLink>
             <ThemeToggle />
+            <IconButton label="下载管理" onClick={() => requestShowDownloadManager()}>
+              <Icon name="download" className="w-5 h-5" />
+            </IconButton>
             <IconButton label="观看历史" onClick={() => setHistoryOpen(true)}>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -147,57 +152,5 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-/** 面板通用骨架：右侧抽屉 */
-export function Drawer({
-  open,
-  onClose,
-  title,
-  children,
-  width = 'max-w-md',
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-  width?: string;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [open, onClose]);
-
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/60 animate-fade-in" onClick={onClose} />
-      <div
-        ref={ref}
-        className={cn(
-          'absolute right-0 top-0 h-full w-full bg-surface-raised border-l border-line overflow-y-auto scrollbar-thin animate-slide-up',
-          width
-        )}
-        role="dialog"
-        aria-label={title}
-      >
-        <div className="sticky top-0 bg-surface-raised px-4 py-3.5 border-b border-line flex items-center justify-between z-10">
-          <h2 className="font-semibold text-content">{title}</h2>
-          <button
-            className="p-1.5 rounded-md text-muted hover:text-content hover:bg-hover"
-            onClick={onClose}
-            aria-label="关闭"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-        <div className="p-4">{children}</div>
-      </div>
-    </div>
-  );
-}
+// Drawer 已抽至 ./drawer（download-manager 等组件也复用，避免 header 循环依赖），此处再导出保持既有引用不变
+export { Drawer } from './drawer';

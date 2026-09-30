@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ToastProvider } from './toast';
 import { AuthProvider } from './auth';
 import { ThemeProvider } from './theme';
+import { GlobalDownloadManager } from './download-manager';
 import { useAppStore, hydrateLiveProbeResults, autoSelectFastest } from '@/lib/store';
 import { syncEnvSubscriptions } from '@/lib/subscription-sync';
 
@@ -85,7 +86,11 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <ToastProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider>
+            {children}
+            {/* 下载事件监听必须常驻（抽屉关闭时播放页也会派发入队事件），故挂在根 Providers 上 */}
+            <GlobalDownloadManager />
+          </AuthProvider>
         </ToastProvider>
       </ThemeProvider>
     </QueryClientProvider>

@@ -20,6 +20,7 @@
     "dexie-react-hooks": "^1.1.7",
     "hls.js": "^1.5.17",
     "mpegts.js": "^1.8.2",
+    "mux.js": "^6.3.0",
     "next": "^15.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
