@@ -215,10 +215,19 @@ function WatchContent() {
                   title={videoTitle}
                   adFilter={store.adFilter}
                   autoplayNext={store.autoplayNext}
+                  // 片段缓存按集分组的键：与 video-cache / 预取器约定一致
+                  episodeKey={`${sourceKey}:${vodId || currentUrl}:${currentIndex}`}
+                  nextUrl={episodes[currentIndex + 1] || undefined}
+                  nextEpisodeKey={
+                    currentIndex + 1 < episodes.length
+                      ? `${sourceKey}:${vodId}:${currentIndex + 1}`
+                      : undefined
+                  }
                   getRestorePosition={getRestorePosition}
                   onTimeUpdate={handleTimeUpdate}
                   onPause={handlePause}
                   onEnded={handleEnded}
+                  onRequestSwitchSource={() => setSwitchOpen(true)}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
