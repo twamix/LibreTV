@@ -10,11 +10,17 @@ import Hls, { type HlsConfig } from 'hls.js';
  *   mp4/webm 等原生容器 → <video> 直接播放；
  * - 无扩展名的地址（如 /channel/xxx?token=...）默认按 HLS 处理，
  *   HLS 直连与代理均失败后**回退原生播放**一次（覆盖"内容是 MP4 却无 .m3u8 后缀"的源）；
- * - 每级直连失败自动切换到 /api/live/stream/ 代理通道重试一次；
+ * - 每级直连失败自动切换到 /api/live/stream?url= 代理通道重试一次；
  * - 直播态 UI：无进度条、无倍速、无截图、无连播。
  */
 
-const STREAM_PROXY_PREFIX = '/api/live/stream/';
+/** 直播流代理地址（查询串形式；路径形式会被网关 URL 归一化破坏） */
+const STREAM_PROXY_BASE = '/api/live/stream?url=';
+
+/** 已是代理地址（新旧两种形式）时不再二次代理 */
+function isProxiedMediaUrl(mediaUrl: string): boolean {
+  return mediaUrl.startsWith('/api/live/stream');
+}
 
 export function isFlvUrl(url: string): boolean {
   return /\.flv(\?|$)/i.test(url);
@@ -32,7 +38,7 @@ function engineOf(url: string): Engine {
 }
 
 function proxyUrl(url: string): string {
-  return STREAM_PROXY_PREFIX + encodeURIComponent(url);
+  return STREAM_PROXY_BASE + encodeURIComponent(url);
 }
 
 interface LivePlayerProps {
@@ -122,7 +128,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         video.removeEventListener('error', onError);
         nativeCleanup = null;
         if (disposed || destroyed) return;
-        if (allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
+        if (allowProxyFallback && !isProxiedMediaUrl(mediaUrl)) {
           showHint('直连失败，改用代理重试...');
           setupNative(video, proxyUrl(url), false, failMessage);
           return;
@@ -187,7 +193,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         if (!playbackStarted) {
           if (
             stage === 'direct' &&
-            !mediaUrl.startsWith(STREAM_PROXY_PREFIX) &&
+            !isProxiedMediaUrl(mediaUrl) &&
             (data.details === 'manifestLoadError' || data.type === Hls.ErrorTypes.NETWORK_ERROR)
           ) {
             showHint('直连失败，改用代理重试...');
@@ -250,7 +256,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       player.load();
       player.on(Mpegts.Events.ERROR, (errType: string) => {
         if (disposed || destroyed) return;
-        if (!playbackStarted && allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
+        if (!playbackStarted && allowProxyFallback && !isProxiedMediaUrl(mediaUrl)) {
           showHint('直连失败，改用代理重试...');
           void setupFlv(video, proxyUrl(url), false);
           return;

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Artplayer from 'artplayer';
 import Hls, { type HlsConfig } from 'hls.js';
-import { filterAdsFromM3u8 } from '@/lib/m3u8';
+import { PROXY_BASE, stripAdGroups } from '@/lib/m3u8';
 import { formatTime } from '@/lib/utils';
 
 /**
@@ -25,7 +25,7 @@ class CustomHlsJsLoader extends Hls.DefaultConfig.loader {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         callbacks.onSuccess = function (response: any, stats: any, ctx: any, networkDetails: any) {
           if (response.data && typeof response.data === 'string') {
-            response.data = filterAdsFromM3u8(response.data);
+            response.data = stripAdGroups(response.data);
           }
           return onSuccess(response, stats, ctx, networkDetails);
         };
@@ -133,11 +133,11 @@ export function PlayerShell({
             case Hls.ErrorTypes.NETWORK_ERROR:
               if (
                 allowProxyFallback &&
-                !mediaUrl.startsWith('/api/proxy/') &&
+                !mediaUrl.startsWith('/api/proxy') &&
                 (errorCount >= 2 || data.details === 'manifestLoadError')
               ) {
                 showHint('直连失败，改用代理重试...');
-                setupHls(video, `/api/proxy/${encodeURIComponent(mediaUrl)}`, false);
+                setupHls(video, PROXY_BASE + encodeURIComponent(mediaUrl), false);
                 return;
               }
               hls.startLoad();

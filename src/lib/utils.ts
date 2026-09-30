@@ -47,7 +47,7 @@ export function buildImageUrl(
   customTemplate: string
 ): string | undefined {
   if (!url) return undefined;
-  if (mode === 'proxy') return `/api/proxy/${encodeURIComponent(url)}`;
+  if (mode === 'proxy') return `/api/proxy?url=${encodeURIComponent(url)}`;
   if (mode === 'custom' && customTemplate) {
     return customTemplate.includes('{url}')
       ? customTemplate.replace('{url}', encodeURIComponent(url))
