@@ -72,6 +72,21 @@ export function Providers({ children }: { children: ReactNode }) {
         if (d && Array.isArray(d.defaultSubscriptions) && d.defaultSubscriptions.length > 0) {
           void syncEnvSubscriptions(d.defaultSubscriptions);
         }
+        // 部署者默认值（DEFAULT_RECOMMEND_SOURCE / DEFAULT_IMAGE_MODE）：
+        // 只对「用户从未动过这项设置、且当前值仍是出厂默认」的浏览器生效——
+        // 用户主动改过的（touched）与老版本里改过值的都不会被覆盖；
+        // 直写 state 不打 touched 标，部署者调整默认值时下个访客仍按同样规则判定（幂等）。
+        const s = useAppStore.getState();
+        if (
+          typeof d.defaultRecommendSource === 'string' &&
+          !s.recommendSourceTouched &&
+          s.recommendSource === 'douban'
+        ) {
+          useAppStore.setState({ recommendSource: d.defaultRecommendSource });
+        }
+        if (typeof d.defaultImageMode === 'string' && !s.imageProxyModeTouched && s.imageProxyMode === 'proxy') {
+          useAppStore.setState({ imageProxyMode: d.defaultImageMode });
+        }
         // 预置点播源测速自动勾选：会话已有效则立即执行；
         // 否则等登录成功事件（libretv:authed）由上面的监听补跑
         if (d && d.verified) {

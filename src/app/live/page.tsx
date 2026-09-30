@@ -10,7 +10,8 @@ import { LiveChannelList, type LiveChannelItem } from '@/components/live-channel
 import { LiveEpgPanel } from '@/components/live-epg-panel';
 import { useAuth } from '@/components/auth';
 import { allLiveSources, useAppStore } from '@/lib/store';
-import { buildImageUrl, cn } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import { SmartImage } from '@/components/smart-image';
 
 /**
  * 直播页：左侧播放器 + 频道信息 + 节目单；右侧频道侧栏。
@@ -123,6 +124,13 @@ function LiveContent() {
     } as LiveChannelItem;
   }, [channels, currentUrl, searchParams]);
 
+  // 台标降级链耗尽后切到首字母占位；台标或加载方式变化时重置
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(
+    () => setLogoFailed(false),
+    [currentChannel?.logo, imageProxyMode, customImageProxy]
+  );
+
   useEffect(() => {
     currentChannelRef.current = currentChannel;
   }, [currentChannel]);
@@ -220,7 +228,6 @@ function LiveContent() {
     );
   }
 
-  const logo = buildImageUrl(currentChannel?.logo, imageProxyMode, customImageProxy);
   const isFavorite = currentChannel ? liveFavorites.includes(currentChannel.url) : false;
 
   return (
@@ -258,9 +265,15 @@ function LiveContent() {
             {currentChannel && (
               <div className="bg-surface-raised border border-line rounded-lg p-3 mt-3 flex items-center gap-3">
                 <div className="w-10 h-10 shrink-0 rounded bg-chip flex items-center justify-center overflow-hidden">
-                  {logo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={logo} alt="" className="w-full h-full object-contain" />
+                  {currentChannel.logo && !logoFailed ? (
+                    <SmartImage
+                      url={currentChannel.logo}
+                      mode={imageProxyMode}
+                      customProxy={customImageProxy}
+                      alt=""
+                      className="w-full h-full object-contain"
+                      onExhausted={() => setLogoFailed(true)}
+                    />
                   ) : (
                     <span className="text-xs text-faint">{currentChannel.name.slice(0, 1)}</span>
                   )}

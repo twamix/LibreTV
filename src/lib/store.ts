@@ -20,8 +20,12 @@ export interface AppSettings {
   doubanEnabled: boolean;
   /** 首页推荐数据源：豆瓣热门 / Bangumi 每日放送（免 key）/ 影视热榜（60s API），默认豆瓣 */
   recommendSource: 'douban' | 'bangumi' | 'hot-list';
+  /** 用户是否在设置中主动选择过推荐数据源；为 false 时部署者的 DEFAULT_RECOMMEND_SOURCE 默认值可生效 */
+  recommendSourceTouched: boolean;
   autoplayNext: boolean;
   imageProxyMode: 'direct' | 'proxy' | 'custom';
+  /** 用户是否在设置中主动选择过封面图加载方式；为 false 时部署者的 DEFAULT_IMAGE_MODE 默认值可生效 */
+  imageProxyModeTouched: boolean;
   customImageProxy: string;
 }
 
@@ -277,8 +281,10 @@ export const useAppStore = create<AppState>()(
       adFilter: true,
       doubanEnabled: true,
       recommendSource: 'douban',
+      recommendSourceTouched: false,
       autoplayNext: true,
       imageProxyMode: 'proxy',
+      imageProxyModeTouched: false,
       customImageProxy: '',
       adultUnlocked: false,
       adultConfigured: false,
@@ -642,6 +648,10 @@ export const useAppStore = create<AppState>()(
       setAdultConfigured: (v) => set({ adultConfigured: v }),
 
       updateSettings: (patch) => {
+        // 用户主动修改推荐数据源 / 封面图加载方式时打上「已选择」标记：此后部署者的
+        // DEFAULT_RECOMMEND_SOURCE / DEFAULT_IMAGE_MODE 默认值不再覆盖该用户的选择
+        const recommendTouched = 'recommendSource' in patch;
+        const imageTouched = 'imageProxyMode' in patch;
         // 打开成人内容过滤时，同步取消勾选所有成人源，避免两者并存
         if (patch.yellowFilter === true) {
           const adultKeys = new Set(
@@ -651,11 +661,17 @@ export const useAppStore = create<AppState>()(
           );
           set({
             ...patch,
+            ...(recommendTouched ? { recommendSourceTouched: true } : null),
+            ...(imageTouched ? { imageProxyModeTouched: true } : null),
             selectedKeys: get().selectedKeys.filter((k) => !adultKeys.has(k)),
           });
           return;
         }
-        set(patch);
+        set({
+          ...patch,
+          ...(recommendTouched ? { recommendSourceTouched: true } : null),
+          ...(imageTouched ? { imageProxyModeTouched: true } : null),
+        });
       },
     }),
     {
@@ -695,8 +711,10 @@ export const useAppStore = create<AppState>()(
         adFilter: s.adFilter,
         doubanEnabled: s.doubanEnabled,
         recommendSource: s.recommendSource,
+        recommendSourceTouched: s.recommendSourceTouched,
         autoplayNext: s.autoplayNext,
         imageProxyMode: s.imageProxyMode,
+        imageProxyModeTouched: s.imageProxyModeTouched,
         customImageProxy: s.customImageProxy,
       }),
       // 同步 storage 会在模块加载时立即 rehydrate（早于 React hydration），

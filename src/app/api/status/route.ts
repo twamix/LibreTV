@@ -3,6 +3,8 @@ import { isPasswordConfigured, sessionFromCookieHeader, adultFromCookieHeader, i
 import { getEnvSources } from '@/lib/env-sources';
 import { getEnvLiveSources } from '@/lib/env-live-sources';
 import { getEnvSubscriptions } from '@/lib/env-subscriptions';
+import { getEnvRecommendSource } from '@/lib/env-recommend-source';
+import { getEnvImageMode } from '@/lib/env-image-mode';
 
 export const runtime = 'nodejs';
 
@@ -25,5 +27,8 @@ export async function GET(req: Request) {
     defaultLiveSources: getEnvLiveSources(),
     // 部署者通过 DEFAULT_SUBSCRIPTIONS 预置的 SourceList 订阅链接
     defaultSubscriptions: getEnvSubscriptions(),
+    // 部署者通过 DEFAULT_RECOMMEND_SOURCE / DEFAULT_IMAGE_MODE 下发的默认值（未配置为 null）
+    defaultRecommendSource: getEnvRecommendSource() ?? null,
+    defaultImageMode: getEnvImageMode() ?? null,
   });
 }

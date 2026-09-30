@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
 import { Drawer } from './header';
 import { db, clearAllHistory, removeHistory, upsertHistory, type HistoryEntry } from '@/lib/db';
 import { buildWatchUrl, buildImageUrl, cn, formatRelativeTime, formatTime } from '@/lib/utils';
+import { SmartImage } from './smart-image';
 import { useToast } from './toast';
 import { resolveSource, useAppStore } from '@/lib/store';
 
@@ -52,6 +53,8 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
   const { toast } = useToast();
   const [imgFailed, setImgFailed] = useState(false);
   const pic = buildImageUrl(item.pic, store.imageProxyMode, store.customImageProxy);
+  // 封面或加载方式变化时重置降级进度，允许新地址重新尝试
+  useEffect(() => setImgFailed(false), [item.pic, store.imageProxyMode, store.customImageProxy]);
 
   const hasPercent =
     item.playbackPosition > 10 && item.duration > 0 && item.playbackPosition < item.duration * 0.95;
@@ -78,13 +81,13 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
       >
         <div className="flex items-center gap-3">
           {pic && !imgFailed ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={pic}
+            <SmartImage
+              url={item.pic}
+              mode={store.imageProxyMode}
+              customProxy={store.customImageProxy}
               alt=""
               className="w-10 h-14 object-cover rounded bg-chip"
-              loading="lazy"
-              onError={() => setImgFailed(true)}
+              onExhausted={() => setImgFailed(true)}
             />
           ) : (
             <div className="w-10 h-14 rounded bg-chip flex items-center justify-center shrink-0">

@@ -106,6 +106,10 @@ export interface AuthStatusResponse {
   defaultLiveSources: LiveSourceConfig[];
   /** 部署者通过 DEFAULT_SUBSCRIPTIONS 环境变量预置的 SourceList 订阅链接（未配置时为空数组） */
   defaultSubscriptions: { url: string; name?: string }[];
+  /** 部署者通过 DEFAULT_RECOMMEND_SOURCE 下发的首页推荐数据源默认值（未配置为 null） */
+  defaultRecommendSource: 'douban' | 'bangumi' | 'hot-list' | null;
+  /** 部署者通过 DEFAULT_IMAGE_MODE 下发的封面图加载方式默认值（未配置为 null） */
+  defaultImageMode: 'direct' | 'proxy' | null;
 }
 
 // —— 直播 / IPTV ——

@@ -2,8 +2,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { buildImageUrl, cn } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
+import { SmartImage } from './smart-image';
+import { Dropdown } from './dropdown';
 import {
   isSlowSource,
   matchesAlive,
@@ -70,8 +72,6 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
   // 精确订阅：避免任何 store 字段变化（尤其测活节流写回）引发本组件重渲染
   const liveFavorites = useAppStore((s) => s.liveFavorites);
   const liveRecent = useAppStore((s) => s.liveRecent);
-  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
-  const customImageProxy = useAppStore((s) => s.customImageProxy);
 
   const [view, setView] = useState<View>('all');
   const [group, setGroup] = useState<string>('');
@@ -252,18 +252,19 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
             }
           }}
         />
-        <select
-          className="input !py-1.5 !px-1.5 text-xs w-auto shrink-0 cursor-pointer"
+        <Dropdown
+          className="shrink-0 [&>button]:!py-1.5 [&>button]:!px-1.5 [&>button]:text-xs"
           value={sortMode}
-          aria-label="排序方式"
-          onChange={(e) => setSortMode(e.target.value as LiveSortMode)}
-        >
-          <option value="default">默认</option>
-          <option value="name">名称</option>
-          <option value="group">分组</option>
-          <option value="probe">可用优先</option>
-          <option value="recent">最近看</option>
-        </select>
+          ariaLabel="排序方式"
+          onChange={(v) => setSortMode(v as LiveSortMode)}
+          options={[
+            { value: 'default', label: '默认' },
+            { value: 'name', label: '名称' },
+            { value: 'group', label: '分组' },
+            { value: 'probe', label: '可用优先' },
+            { value: 'recent', label: '最近看' },
+          ]}
+        />
       </div>
 
       {/* 测活 + 可用性筛选工具条 */}
@@ -392,11 +393,7 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
                   cursor={cursor === vi.index}
                   isFav={favSet.has(filtered[vi.index].url)}
                   probe={probeResults.get(filtered[vi.index].url)}
-                  logoUrl={buildImageUrl(
-                    filtered[vi.index].logo,
-                    imageProxyMode,
-                    customImageProxy
-                  )}
+                  logo={filtered[vi.index].logo}
                   onSelect={onSelect}
                   onRemoveRecent={view === 'recent' ? removeRecent : undefined}
                 />
@@ -431,7 +428,7 @@ const ChannelRow = memo(function ChannelRow({
   cursor,
   isFav,
   probe,
-  logoUrl,
+  logo,
   onSelect,
   onRemoveRecent,
 }: {
@@ -440,11 +437,17 @@ const ChannelRow = memo(function ChannelRow({
   cursor: boolean;
   isFav: boolean;
   probe?: ProbeResult;
-  logoUrl?: string;
+  /** 原始台标地址（未经代理加工），降级链在组件内按加载方式生成 */
+  logo?: string;
   onSelect: (channel: LiveChannelItem) => void;
   /** 仅最近视图传入：删除该条观看记录 */
   onRemoveRecent?: (url: string) => void;
 }) {
+  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const customImageProxy = useAppStore((s) => s.customImageProxy);
+  // 台标加载方式与原地址变化时重置降级进度
+  const [logoFailed, setLogoFailed] = useState(false);
+  useEffect(() => setLogoFailed(false), [logo, imageProxyMode, customImageProxy]);
   // H.265/HEVC：国内 IPTV 常见，测活通过但 Chromium 内核通常无法软解
   const isHevc = Boolean(probe?.codec && /hvc1|hev1|hevc/i.test(probe.codec));
   // 源限速：分片可达但吞吐不足，绿点却播不了的主因
@@ -494,16 +497,15 @@ const ChannelRow = memo(function ChannelRow({
         />
         {/* 台标 */}
         <div className="w-7 h-7 shrink-0 rounded bg-chip flex items-center justify-center overflow-hidden">
-          {logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={logoUrl}
+          {logo && !logoFailed ? (
+            <SmartImage
+              url={logo}
+              mode={imageProxyMode}
+              customProxy={customImageProxy}
               alt=""
               className="w-full h-full object-contain"
-              loading="lazy"
-              onError={(e) => {
-                (e.target as HTMLImageElement).style.visibility = 'hidden';
-              }}
+              // 降级链耗尽后收起台标，露出下方首字母占位
+              onExhausted={() => setLogoFailed(true)}
             />
           ) : (
             <span className="text-[10px] text-faint">{channel.name.slice(0, 1)}</span>

@@ -4,9 +4,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client-api';
 import type { SourceConfig, SearchResultItem } from '@/lib/types';
-import { buildImageUrl, buildWatchUrl, cn } from '@/lib/utils';
+import { buildWatchUrl, cn } from '@/lib/utils';
 import { useAppStore, resolveSource } from '@/lib/store';
 import { useToast } from './toast';
+import { SmartImage } from './smart-image';
 
 /**
  * 换源面板：跨源按标题搜索 → 匹配同名/同前缀资源 → 并发测速（详情接口耗时）→ 按速度排序展示。
@@ -173,7 +174,6 @@ export function SwitchSourceModal({
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {sorted.map((c) => {
               const isCurrent = c.source.key === currentSourceKey && String(c.result.vodId) === String(currentVodId);
-              const img = buildImageUrl(c.result.pic, store.imageProxyMode, store.customImageProxy);
               return (
                 <button
                   key={`${c.source.key}_${c.result.vodId}`}
@@ -182,12 +182,7 @@ export function SwitchSourceModal({
                   disabled={isCurrent}
                 >
                   <div className="relative aspect-[2/3] bg-chip">
-                    {img ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={img} alt={c.result.name} className="w-full h-full object-cover" loading="lazy" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-faint text-xs">无封面</div>
-                    )}
+                    <CandidateCover pic={c.result.pic} name={c.result.name} />
                     <span
                       className={cn(
                         'absolute top-1.5 right-1.5 tag',
@@ -211,5 +206,27 @@ export function SwitchSourceModal({
         )}
       </div>
     </div>
+  );
+}
+
+/** 候选封面：按当前加载方式逐级降级，全部失败时显示「无封面」占位 */
+function CandidateCover({ pic, name }: { pic?: string; name: string }) {
+  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [pic, imageProxyMode, customImageProxy]);
+
+  if (!pic || failed) {
+    return <div className="w-full h-full flex items-center justify-center text-faint text-xs">无封面</div>;
+  }
+  return (
+    <SmartImage
+      url={pic}
+      mode={imageProxyMode}
+      customProxy={customImageProxy}
+      alt={name}
+      className="w-full h-full object-cover"
+      onExhausted={() => setFailed(true)}
+    />
   );
 }

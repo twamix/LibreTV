@@ -8,6 +8,7 @@ import { buildImageUrl, buildWatchUrl } from '@/lib/utils';
 import { useAppStore, resolveSource } from '@/lib/store';
 import { useToast } from './toast';
 import { cn } from '@/lib/utils';
+import { SmartImage } from './smart-image';
 import { addSearchHistory } from '@/lib/db';
 
 /**
@@ -160,12 +161,14 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
             <>
               <div className="flex flex-col sm:flex-row gap-4 mb-4">
                 {poster && !posterFailed && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={poster}
+                  <SmartImage
+                    url={item.pic}
+                    mode={store.imageProxyMode}
+                    customProxy={store.customImageProxy}
                     alt={item.name}
+                    loading="eager"
                     className="w-24 sm:w-32 aspect-[2/3] object-cover rounded-lg bg-chip shrink-0 self-center sm:self-start"
-                    onError={() => setPosterFailed(true)}
+                    onExhausted={() => setPosterFailed(true)}
                   />
                 )}
                 <div className="min-w-0 space-y-3">

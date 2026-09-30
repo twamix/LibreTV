@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Drawer } from './header';
+import { Dropdown } from './dropdown';
 import {
   allLiveSources,
   isSourceDisabled,
@@ -461,9 +462,9 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
             value={store.imageProxyMode}
             onChange={(v) => store.updateSettings({ imageProxyMode: v as 'direct' | 'proxy' | 'custom' })}
             options={[
-              { value: 'direct', label: '直连' },
-              { value: 'proxy', label: '内置代理（默认）' },
-              { value: 'custom', label: '自定义代理' },
+              { value: 'direct', label: '直连', hint: '最省服务器流量' },
+              { value: 'proxy', label: '内置代理（默认）', hint: '最稳定' },
+              { value: 'custom', label: '自定义代理', hint: '自建转发模板' },
             ]}
           />
           {store.imageProxyMode === 'custom' && (
@@ -503,9 +504,9 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
               value={store.recommendSource}
               onChange={(v) => store.updateSettings({ recommendSource: v as 'douban' | 'bangumi' | 'hot-list' })}
               options={[
-                { value: 'douban', label: '豆瓣（电影/剧集）' },
-                { value: 'bangumi', label: 'Bangumi 新番放送' },
-                { value: 'hot-list', label: '影视榜单（豆瓣周榜/百度热播）' },
+                { value: 'douban', label: '豆瓣（电影/剧集）', hint: '热门电影与剧集' },
+                { value: 'bangumi', label: 'Bangumi 新番放送', hint: '每日放送（免 key）' },
+                { value: 'hot-list', label: '影视榜单（豆瓣周榜/百度热播）', hint: '60s 聚合榜单' },
               ]}
             />
           </div>
@@ -1113,34 +1114,19 @@ function SelectRow({
   label: string;
   value: string;
   onChange: (v: string) => void;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; hint?: string }[];
 }) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <span className="text-sm text-content">{label}</span>
-      <div className="relative">
-        <select
-          className="input !py-1.5 !pl-2.5 !pr-7 cursor-pointer appearance-none text-xs"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          aria-label={label}
-        >
-          {options.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <svg
-          className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-          aria-hidden
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </div>
+    <div className="flex items-center justify-between gap-4 py-0.5">
+      <span className="min-w-0 text-sm text-content">{label}</span>
+      {/* 选项面板为浮层（Dropdown），此处沿用原生 select 的紧凑尺寸 */}
+      <Dropdown
+        className="shrink-0 [&>button]:!py-1.5 [&>button]:!pl-2.5 [&>button]:!pr-2 [&>button]:text-xs"
+        value={value}
+        onChange={onChange}
+        options={options}
+        ariaLabel={label}
+      />
     </div>
   );
 }
