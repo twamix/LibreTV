@@ -12,6 +12,7 @@ import {
   isInDisabledSubscription,
   isSourceDisabled,
   keyBelongsToSubscription,
+  selectAllNonAdultEnvSources,
   SOURCE_DISABLE_LADDER,
   subKeyPrefix,
   useAppStore,
@@ -22,6 +23,8 @@ const store = () => useAppStore.getState();
 beforeEach(() => {
   useAppStore.setState({
     customAPIs: [],
+    envSources: [],
+    envKeysSeen: [],
     selectedKeys: [],
     subscriptions: [],
     sourceHealth: {},
@@ -30,6 +33,43 @@ beforeEach(() => {
     liveFavorites: [],
     liveRecent: [],
     yellowFilter: false,
+    autoSelectRun: false,
+  });
+});
+
+describe('免密浏览时的预置源降级选择', () => {
+  it('未解锁时全选非成人源并标记已处理，避免以后反复自动勾选', () => {
+    useAppStore.setState({
+      envSources: [
+        { key: 'env_vod', name: '点播源', url: 'https://vod.example.com' },
+        { key: 'env_adult', name: '成人源', url: 'https://adult.example.com', isAdult: true },
+      ],
+      envKeysSeen: [],
+      selectedKeys: ['custom_source'],
+    });
+
+    selectAllNonAdultEnvSources();
+
+    expect(store().selectedKeys).toEqual(['custom_source', 'env_vod']);
+    expect(store().envKeysSeen).toContain('env_vod');
+    expect(store().envKeysSeen).not.toContain('env_adult');
+  });
+
+  it('用户手动取消勾选后不再被勾回，但新出现的预置源仍会补上', () => {
+    useAppStore.setState({
+      envSources: [
+        { key: 'env_vod', name: '点播源', url: 'https://vod.example.com' },
+        { key: 'env_new', name: '新增源', url: 'https://new.example.com' },
+      ],
+      envKeysSeen: ['env_vod'],
+      selectedKeys: [],
+      autoSelectRun: true, // 已跑过一轮测速：此时零勾选代表用户的明确选择，不是遗留态
+    });
+
+    selectAllNonAdultEnvSources();
+
+    expect(store().selectedKeys).toEqual(['env_new']);
+    expect(store().envKeysSeen).toEqual(['env_vod', 'env_new']);
   });
 });
 

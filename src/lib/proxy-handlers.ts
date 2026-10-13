@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { guardRequest, jsonError } from '@/lib/api-guard';
+import { jsonError } from '@/lib/api-guard';
 import { checkLiveUrlAllowed, checkUpstreamAllowed, isBlockedByDNS, isValidProxyUrl } from '@/lib/ssrf';
 import { rewriteM3u8 } from '@/lib/m3u8';
 
@@ -14,7 +14,11 @@ import { rewriteM3u8 } from '@/lib/m3u8';
  *   一律走查询串，旧地址继续可解。
  *
  * 两条 handler 的抓取策略不同（点播整段限时重试 / 直播仅响应头限时不重试），
- * 因此分别实现，但 SSRF 校验、鉴权、m3u8 重写前缀等语义在此统一。
+ * 因此分别实现，但 SSRF 校验、m3u8 重写前缀等语义在此统一。
+ *
+ * 鉴权：站点浏览（含播放）已免密，代理是播放链路的一环，**匿名访客同样放行**；
+ * 需要密码的只是设置类接口（见 api-guard）。SSRF 防护（协议白名单、逐跳 DNS 校验）
+ * 是这里唯一的安全边界，不因匿名而放宽。
  */
 
 const UA =
@@ -85,9 +89,9 @@ function isDoubanHost(host: string): boolean {
 }
 
 /**
- * 未登录即可代理的图片域白名单（精确后缀匹配，防 `evil-bgm.tv` 类绕过）：
+ * 图片域名识别（精确后缀匹配，防 `evil-bgm.tv` 类绕过）：
  * 豆瓣封面需要 Referer 伪装；cmliussss 镜像、热榜 cover_proxy 镜像与 Bangumi 封面
- * 均为公开图片 CDN，无 Referer 校验，仅需防开放代理滥用。
+ * 均为公开图片 CDN，用于设置正确响应类型与过滤上游 HTML 挑战页。
  */
 function isAnonymousImageHost(host: string): boolean {
   const h = host.toLowerCase();
@@ -100,8 +104,7 @@ function isAnonymousImageHost(host: string): boolean {
   );
 }
 
-// 未鉴权的图片等资源也允许走代理（豆瓣防盗链需要 Referer 伪装）；
-// 但为防止被当作开放代理滥用，仅放行上述公开图片域，其余必须已登录。
+// 识别图片目标用于响应类型与 HTML 挑战页兜底；代理访问权限统一由 SSRF 校验约束。
 function looksLikeImageUrl(target: string): boolean {
   const host = (() => {
     try { return new URL(target).hostname; } catch { return ''; }
@@ -131,14 +134,10 @@ function doubanImageCandidates(target: string): string[] {
 
 /**
  * 通用流式代理：
- * - 已登录会话（httpOnly cookie）→ m3u8 重写后的分片同源请求自动携带，不再有旧版丢鉴权参数的问题；
- * - 未登录仅放行图片目标（豆瓣封面等），且同样受 SSRF 防护约束；
+ * - 匿名访客可用（站点浏览与播放免密），m3u8 重写后的分片同源请求直接命中本路由；
  * - m3u8 文本重写为代理查询串地址，分片/key/map 全部经本站转发，规避上游 CORS。
  */
 export async function handleProxyRequest(req: Request, targetUrl: string): Promise<Response> {
-  const guarded = guardRequest(req);
-  if (guarded && !looksLikeImageUrl(targetUrl)) return guarded;
-
   if (!isValidProxyUrl(targetUrl)) {
     return new NextResponse('无效的 URL', { status: 400 });
   }
@@ -277,12 +276,10 @@ async function fetchLiveUpstream(
  * - 不重试（重试对直播无意义）；
  * - m3u8 manifest 仍需重写（变体/分片地址改指本路由），FLV 等纯透传；
  * - 每一跳都强制 SSRF 校验（不信任解析阶段的校验结果）；
+ * - 匿名访客同样放行（直播播放免密，直连失败时会回退到本路由）；
  * - 部署者可设 LIVE_ALLOW_PRIVATE=1 显式放行内网自建源（默认拒绝）。
  */
 export async function handleLiveStreamRequest(req: Request, targetUrl: string): Promise<Response> {
-  const guarded = guardRequest(req);
-  if (guarded) return guarded;
-
   const verdict = await checkLiveUrlAllowed(targetUrl);
   if (!verdict.ok) return jsonError(verdict.reason, 403);
 

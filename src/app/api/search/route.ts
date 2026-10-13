@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { guardRequest } from '@/lib/api-guard';
 import { getCache, setCache } from '@/lib/fetch-utils';
 import { aggregateOutcomes, searchSource } from '@/lib/search-aggregate';
 import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutcome } from '@/lib/types';
@@ -30,9 +29,6 @@ function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolea
  * 与家庭过滤版 TVBOX 代理共用同一套搜索与成人过滤逻辑。
  */
 export async function POST(req: Request) {
-  const guarded = guardRequest(req);
-  if (guarded) return guarded;
-
   let body: SearchBody;
   try {
     body = (await req.json()) as SearchBody;

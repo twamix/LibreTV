@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { guardRequest, jsonError } from '@/lib/api-guard';
+import { jsonError } from '@/lib/api-guard';
 import { checkLiveUrlAllowed } from '@/lib/ssrf';
 import { fetchUpstream } from '@/lib/fetch-utils';
 import { getLiveCache, setLiveCache } from '@/lib/live-cache';
@@ -20,9 +20,6 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
  * 解析结果（按频道索引、24h 时间窗裁剪）整体缓存 6 小时；单频道按需查询。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
-  if (guarded) return guarded;
-
   const sp = new URL(req.url).searchParams;
   const url = sp.get('url')?.trim();
   const channel = sp.get('channel')?.trim();

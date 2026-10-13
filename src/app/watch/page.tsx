@@ -9,7 +9,6 @@ import { PlayerShell } from '@/components/player-shell';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { enqueueDownload } from '@/components/download-manager';
 import { Icon } from '@/components/icon';
-import { useAuth } from '@/components/auth';
 import { resolveSource, useAppStore } from '@/lib/store';
 import {
   clearProgress,
@@ -38,7 +37,6 @@ function WatchContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const store = useAppStore();
-  const { verified } = useAuth();
 
   const sourceKey = searchParams.get('source') || '';
   const vodId = searchParams.get('id') || '';
@@ -58,7 +56,7 @@ function WatchContent() {
   const detailQuery = useQuery({
     queryKey: ['detail', sourceKey, vodId, source?.url],
     queryFn: ({ signal }) => api.detail(vodId, source!, signal),
-    enabled: Boolean(source && vodId && verified),
+    enabled: Boolean(source && vodId),
     staleTime: 5 * 60_000,
   });
 
@@ -101,7 +99,7 @@ function WatchContent() {
 
   // 写入观看历史（进入页面即记录，进度后续增量更新）
   useEffect(() => {
-    if (!verified || !sourceKey || !currentUrl) return;
+    if (!sourceKey || !currentUrl) return;
     const timer = setTimeout(() => {
       upsertHistory({
         sourceKey,
@@ -118,7 +116,7 @@ function WatchContent() {
     }, 2000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verified, sourceKey, vodId, currentIndex, videoTitle, currentUrl]);
+  }, [sourceKey, vodId, currentIndex, videoTitle, currentUrl]);
 
   const handleTimeUpdate = useCallback(
     (position: number, duration: number) => {
@@ -164,14 +162,6 @@ function WatchContent() {
   }, [currentIndex, episodes.length, goEpisode]);
 
   const orderedEpisodes = reversed ? [...episodes].map((_, i) => episodes.length - 1 - i) : episodes.map((_, i) => i);
-
-  if (!verified) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-faint text-sm">等待访问验证...</p>
-      </div>
-    );
-  }
 
   if (!source) {
     return (

@@ -4,7 +4,7 @@ import { SESSION_COOKIE, signSession } from '@/lib/auth';
 import { clearShares, getShareText } from '@/lib/share-store';
 
 /**
- * 发布接口单测：登录守卫、字段白名单与条数上限，以及本站直链形状。
+ * 发布接口单测：设置解锁守卫、字段白名单与条数上限，以及本站直链形状。
  * 内容直存服务端内存，不再经过第三方粘贴板——断言返回的直链能读回原文。
  */
 

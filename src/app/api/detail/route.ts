@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { guardRequest } from '@/lib/api-guard';
 import { resolveDetail } from '@/lib/detail-resolve';
 import type { SourceConfig, VideoDetail } from '@/lib/types';
 
@@ -22,9 +21,6 @@ function parseSource(raw: string | null): SourceConfig | null {
  * 解析核心复用 `@/lib/detail-resolve`，与家庭过滤版 TVBOX 代理共用同一套链路。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
-  if (guarded) return guarded;
-
   const url = new URL(req.url);
   const id = (url.searchParams.get('id') || '').trim();
   const source = parseSource(url.searchParams.get('source'));

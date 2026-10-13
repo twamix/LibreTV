@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { guardRequest, jsonError } from '@/lib/api-guard';
+import { guardSettingsRequest, jsonError } from '@/lib/api-guard';
 import { checkLiveUrlAllowed } from '@/lib/ssrf';
 import { fetchUpstream } from '@/lib/fetch-utils';
 import { getLiveCache, setLiveCache } from '@/lib/live-cache';
@@ -48,14 +48,17 @@ function toM3uText(playlist: LivePlaylistResponse): string {
  * - format=m3u 返回解析后的标准 M3U 文本（订阅导出）。
  */
 export async function GET(req: Request) {
-  const guarded = guardRequest(req);
-  if (guarded) return guarded;
-
   const sp = new URL(req.url).searchParams;
-  const url = sp.get('url')?.trim();
-  if (!url) return jsonError('缺少 url 参数', 400);
   const format = sp.get('format') || 'json';
   const force = sp.get('force') === '1';
+  // 直播页面读取已启用频道的缓存列表属于浏览功能；强制测活与设置里的 M3U 导出属于设置操作。
+  if (force || format === 'm3u') {
+    const guarded = guardSettingsRequest(req);
+    if (guarded) return guarded;
+  }
+
+  const url = sp.get('url')?.trim();
+  if (!url) return jsonError('缺少 url 参数', 400);
 
   // 直播专用校验：默认拒绝内网，部署者可设 LIVE_ALLOW_PRIVATE=1 放行自建 IPTV
   const verdict = await checkLiveUrlAllowed(url);

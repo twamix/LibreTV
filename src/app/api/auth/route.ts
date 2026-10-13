@@ -51,10 +51,10 @@ export async function POST(req: Request) {
   return res;
 }
 
-/** GET：查询当前会话状态 */
+/** GET：查询当前会话状态（设置是否已解锁） */
 export async function GET(req: Request) {
-  const verified = sessionFromCookieHeader(req.headers.get('cookie'));
-  return NextResponse.json({ success: true, verified });
+  const settingsUnlocked = sessionFromCookieHeader(req.headers.get('cookie'));
+  return NextResponse.json({ success: true, settingsUnlocked });
 }
 
 /** DELETE：登出 */

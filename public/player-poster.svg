@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="768" viewBox="0 0 1024 768" role="img" aria-label="TV">
+  <!--
+    播放器起播前的品牌占位图（点播 player-shell 与直播 live-player 共用）。
+    字形取本仓库图标（public/icons/icon-512.png）的几何字标风格：
+    T 为蓝→紫斜向渐变，V 为紫→粉→青横向渐变。
+    字标用矢量路径而非 <text>，避免依赖查看端字体。
+  -->
+  <defs>
+    <linearGradient id="brandT" x1="258" y1="244" x2="498" y2="524" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#29abe2" />
+      <stop offset="1" stop-color="#9b7fd4" />
+    </linearGradient>
+    <linearGradient id="brandV" x1="526" y1="384" x2="766" y2="384" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9b7fd4" />
+      <stop offset="0.5" stop-color="#ec4899" />
+      <stop offset="1" stop-color="#29abe2" />
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="768" fill="#000000" />
+
+  <!-- T：横杠 + 竖干 -->
+  <path d="M258 244h240v72H414v208h-72V316h-84z" fill="url(#brandT)" />
+
+  <!-- V：外轮廓 顶左→外底→顶右，内轮廓 顶右内→内底→顶左内 -->
+  <path d="M526 244 646 524 766 244h-62L646 379 588 244z" fill="url(#brandV)" />
+
+  <text
+    x="512"
+    y="622"
+    text-anchor="middle"
+    font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans SC',sans-serif"
+    font-size="34"
+    letter-spacing="6"
+    fill="#8b95a5"
+  >自由观影，畅想精彩</text>
+</svg>

@@ -3,8 +3,9 @@
 import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload } from './types';
 
 /**
- * 客户端 API 封装。401 时触发全局事件打开登录框，
- * 替代旧版在每个函数里手工检查 isPasswordVerified 的散弹式写法。
+ * 客户端 API 封装。设置类接口返回 401/503 时触发全局事件打开设置解锁框
+ * （站点浏览与播放免密，只有设置相关接口会 401），
+ * 替代旧版在每个函数里手工检查「是否已登录」的散弹式写法。
  */
 
 export class ApiError extends Error {
@@ -51,7 +52,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    throw new ApiError('需要登录', 401);
+    throw new ApiError('设置未解锁', 401);
   }
   if (res.status === 503) {
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: 'setup' }));
@@ -242,7 +243,7 @@ export const api = {
     });
     if (res.status === 401) {
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-      throw new ApiError('需要登录', 401);
+      throw new ApiError('设置未解锁', 401);
     }
     if (res.status === 503) {
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: 'setup' }));
@@ -299,7 +300,7 @@ async function searchStream(
   });
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    throw new ApiError('需要登录', 401);
+    throw new ApiError('设置未解锁', 401);
   }
   if (res.status === 503) {
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: 'setup' }));

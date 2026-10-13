@@ -93,8 +93,8 @@ export interface BangumiCalendarResponse {
 export interface AuthStatusResponse {
   /** 服务器是否配置了 PASSWORD */
   passwordRequired: boolean;
-  /** 当前会话是否已验证 */
-  verified: boolean;
+  /** 设置是否已解锁（未配置 PASSWORD 时恒为 false，即设置打不开）——站点浏览不需要解锁 */
+  settingsUnlocked: boolean;
   version: string;
   /** 部署者是否配置了 ADULT_PASSWORD（决定是否展示成人解锁密码框） */
   adultConfigured: boolean;

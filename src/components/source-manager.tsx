@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState, useCallback } from 'react';
-import { Drawer } from './header';
+import { Drawer } from './drawer';
 import { Dropdown } from './dropdown';
 import {
   allLiveSources,
@@ -47,6 +47,7 @@ const SETTINGS_TABS: { id: SettingsTab; label: string }[] = [
 export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const store = useAppStore();
   const { toast } = useToast();
+  const { settingsUnlocked } = useAuth();
   const [editing, setEditing] = useState<string | null>(null);
   const [tests, setTests] = useState<Record<string, TestState>>({});
   // Tab 选中态不持久化：每次打开抽屉回到「点播源」
@@ -234,6 +235,8 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
       </span>
     );
   };
+
+  if (!settingsUnlocked) return null;
 
   return (
     <Drawer open={open} onClose={onClose} title="设置">
@@ -519,7 +522,7 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
         )}
         <section className="mb-6 pt-5 border-t border-line">
           <SectionTitle title="配置" />
-          <ConfigIoButtons />
+          <ConfigIoButtons onLock={onClose} />
         </section>
       </>
       )}
@@ -1131,15 +1134,11 @@ function SelectRow({
   );
 }
 
-function ConfigIoButtons() {
+function ConfigIoButtons({ onLock }: { onLock: () => void }) {
   const { toast } = useToast();
-  const { verified, openLogin } = useAuth();
+  const { settingsUnlocked, logout } = useAuth();
 
   const doExport = async () => {
-    if (verified === false) {
-      openLogin();
-      return;
-    }
     try {
       const json = await exportConfig();
       const blob = new Blob([json], { type: 'application/json' });
@@ -1184,6 +1183,19 @@ function ConfigIoButtons() {
           }}
         />
       </label>
+      {/* 站点浏览免密后，密码只在打开设置时输入；这里提供主动上锁（清会话 cookie），
+          共用设备上改完设置即可退出，不必等 cookie 过期 */}
+      {settingsUnlocked && (
+        <button
+          className="btn-ghost flex-1 text-xs"
+          onClick={async () => {
+            await logout();
+            onLock();
+          }}
+        >
+          锁定设置
+        </button>
+      )}
     </div>
   );
 }

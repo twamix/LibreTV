@@ -8,14 +8,20 @@ import { getEnvImageMode } from '@/lib/env-image-mode';
 
 export const runtime = 'nodejs';
 
-/** 站点状态：客户端据此决定是否弹出登录框 / 提示管理员配置密码，并获取预置采集站与预置直播源 */
+/**
+ * 站点状态：客户端据此决定是否需要弹设置解锁框、提示管理员配置密码，
+ * 并获取预置采集站与预置直播源。
+ *
+ * 站点浏览（搜索/详情/推荐/直播/播放）不需要密码，因此这里不再返回「站点是否已登录」；
+ * `settingsUnlocked` 表示「设置是否已解锁」——未配置 PASSWORD 时恒为 false（设置打不开）。
+ */
 export async function GET(req: Request) {
   const passwordRequired = isPasswordConfigured();
-  const verified = passwordRequired && sessionFromCookieHeader(req.headers.get('cookie'));
+  const settingsUnlocked = passwordRequired && sessionFromCookieHeader(req.headers.get('cookie'));
   const adultConfigured = isAdultPasswordConfigured();
   return NextResponse.json({
     passwordRequired,
-    verified,
+    settingsUnlocked,
     // 成人内容源是否配置解锁密码、当前浏览器是否已解锁
     adultConfigured,
     adultUnlocked: adultConfigured && adultFromCookieHeader(req.headers.get('cookie')),

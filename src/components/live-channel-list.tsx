@@ -16,6 +16,7 @@ import {
   type LiveSortMode,
 } from '@/lib/live-channel-filter';
 import { useLiveProbe, type ProbeResult } from './use-live-probe';
+import { useAuth } from './auth';
 import type { LiveChannel } from '@/lib/types';
 
 /**
@@ -91,6 +92,8 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
     isProbing,
     hint: probeHint,
   } = useLiveProbe();
+  // 测活由服务端发起（/api/live/probe 属设置类接口，需密码）：未解锁时按钮提示输入密码
+  const { settingsUnlocked, openLogin } = useAuth();
 
   // 测活 ETA 每秒刷新：探测长尾（在途请求未返回）期间进度不推进，剩余时间也要走动
   const [, setProbeTick] = useState(0);
@@ -272,8 +275,12 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
         <button
           className="btn-ghost !py-1 !px-2 text-xs"
           disabled={isProbing || filtered.length === 0}
-          onClick={() => void probe(filtered)}
-          title="探测当前列表频道是否可播（分片级校验；量大时自动分批排队跑完，结果 6 小时内有效）"
+          onClick={() => (settingsUnlocked ? void probe(filtered) : openLogin(() => void probe(filtered)))}
+          title={
+            settingsUnlocked
+              ? '探测当前列表频道是否可播（分片级校验；量大时自动分批排队跑完，结果 6 小时内有效）'
+              : '测活需要密码（服务端发起探测），点击输入'
+          }
         >
           测活
         </button>

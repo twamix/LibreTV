@@ -8,7 +8,6 @@ import { Header } from '@/components/header';
 import { LivePlayer } from '@/components/live-player';
 import { LiveChannelList, type LiveChannelItem } from '@/components/live-channel-list';
 import { LiveEpgPanel } from '@/components/live-epg-panel';
-import { useAuth } from '@/components/auth';
 import { allLiveSources, useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { SmartImage } from '@/components/smart-image';
@@ -59,7 +58,6 @@ function LiveContent() {
   const liveFavorites = useAppStore((s) => s.liveFavorites);
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
-  const { verified } = useAuth();
   const [copied, setCopied] = useState(false);
   // 移动端频道抽屉开合
   const [listOpen, setListOpen] = useState(false);
@@ -83,7 +81,7 @@ function LiveContent() {
       const results = await Promise.allSettled(sources.map((s) => api.livePlaylist(s.url)));
       return sources.map((source, i) => ({ source, result: results[i] }));
     },
-    enabled: verified && sources.length > 0,
+    enabled: sources.length > 0,
     staleTime: 10 * 60_000,
   });
 
@@ -216,17 +214,6 @@ function LiveContent() {
     },
     [selectChannel]
   );
-
-  if (!verified) {
-    return (
-      <div className="min-h-screen flex flex-col">
-        <Header />
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-faint text-sm">等待访问验证...</p>
-        </div>
-      </div>
-    );
-  }
 
   const isFavorite = currentChannel ? liveFavorites.includes(currentChannel.url) : false;
 

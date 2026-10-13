@@ -346,7 +346,7 @@ export const useAppStore = create<AppState>()(
 
       setEnvSources: (list) => {
         // 预置源首次出现时不做全量勾选：由调用方经 autoSelectFastest 按实测耗时勾选最低的 N 个。
-        // 不在此处写 envKeysSeen——登录前探活会 401，须等登录后真正跑完再标记，否则永不重试。
+        // 不在此处写 envKeysSeen——未解锁探活会 401，须等设置解锁后真正跑完再标记，否则永不重试。
         const seen = new Set(get().envKeysSeen);
         const freshKeys = list.map((s) => s.key).filter((k) => !seen.has(k));
         set({ envSources: list });
@@ -808,9 +808,9 @@ const AUTO_SELECT_CONCURRENCY = 5;
  * 成人源的勾选由解锁/锁定动作显式控制）；已勾选、测速失败或超时的源跳过，
  * 因此源数量不足 N 时勾选到几个算几个。用户的既有勾选保持不变。
  *
- * 会话未就绪（未登录 / 服务器未配置密码）时探活会整体 401/503：此时中止且
- * **不标记已处理**，由调用方在登录成功后（libretv:authed）补跑；
- * 登录态下跑完一轮（无论勾选几个）即调用 markEnvSeen 标记，避免每次打开都重测。
+ * 设置未解锁（未解锁 / 服务器未配置 PASSWORD）时，探活会返回 401/503：此时中止且
+ * **不标记已处理**，由调用方在设置解锁后补跑；
+ * 设置已解锁时跑完一轮（无论勾选几个）即调用 markEnvSeen 标记，避免每次打开都重测。
  */
 export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SELECT_FASTEST_TOP): Promise<void> {
   if (candidateKeys.length === 0) return;
@@ -842,7 +842,7 @@ export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SEL
         if (r.ok && r.ms > 0) results.push({ key: src.key, ms: r.ms });
       } catch (err) {
         if (err instanceof ApiError && (err.status === 401 || err.status === 503)) {
-          // 会话未就绪：整体中止，等登录后补跑（不标记已处理）
+          // 设置未解锁：整体中止，等解锁后补跑（不标记已处理）
           authReady = false;
           break;
         }
@@ -868,6 +868,30 @@ export async function autoSelectFastest(candidateKeys: string[], topN = AUTO_SEL
 /** 全部成人源 key（env + custom + 订阅导入均在 customAPIs/envSources 内） */
 function allAdultKeys(state: Pick<AppState, 'customAPIs' | 'envSources'>): string[] {
   return [...state.customAPIs, ...state.envSources].filter((s) => s.isAdult).map((s) => s.key);
+}
+
+/**
+ * 设置未解锁时的预置点播源降级勾选：
+ * 站点浏览已免密，但源测速（/api/source/test）属于设置类接口，未解锁时不可用——
+ * 此时直接全选非成人预置源，保证匿名访客「打开就能搜能播」，
+ * 不可用源交给既有健康度模型（连续失败自动停用）兜底；
+ * 用户解锁设置后可在设置里重新测速精选，用户的既有勾选保持不变。
+ */
+export function selectAllNonAdultEnvSources(): void {
+  const state = useAppStore.getState();
+  const all = state.envSources.filter((s) => !s.isAdult).map((s) => s.key);
+  if (all.length === 0) return;
+  // 候选判定与 Providers 的 pendingEnvSourceKeys 保持一致：
+  // - 旧版本（v2.13.0）遗留态（从未测速出结果且零勾选）：忽略残留 seen 标记，给全部源一次机会；
+  // - 其余情况只补没处理过的预置源——用户手动取消勾选后不再被自动勾回，新加入的预置源仍会补上。
+  const legacy = !state.autoSelectRun && state.selectedKeys.length === 0;
+  const keys = legacy ? all : all.filter((k) => !state.envKeysSeen.includes(k));
+  if (keys.length === 0) return;
+  const cur = state.selectedKeys;
+  state.setSelectedKeys([...new Set([...cur, ...keys])]);
+  // 全选是未解锁时采用的明确降级决策：记为已处理，避免用户稍后手动取消勾选后，
+  // 下次访问又因自动测速把它加回来。
+  state.markEnvSeen(keys);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { guardRequest } from '@/lib/api-guard';
+import { guardSettingsRequest } from '@/lib/api-guard';
 import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES } from '@/lib/source-list';
 import { MAX_PUBLISH_BYTES, saveShare } from '@/lib/share-store';
 import { buildTvboxConfig, buildTvboxProxyConfig } from '@/lib/tvbox-export';
@@ -102,7 +102,7 @@ function publishText(origin: string, text: string): { url: string } | { error: s
 
 /** 发布当前源列表：三种格式都是一步存本站，返回直链 */
 export async function POST(req: Request) {
-  const guarded = guardRequest(req);
+  const guarded = guardSettingsRequest(req);
   if (guarded) return guarded;
 
   let raw: unknown;
