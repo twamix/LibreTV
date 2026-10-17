@@ -10,6 +10,7 @@ import { SwitchSourceModal } from '@/components/switch-source';
 import { enqueueDownload } from '@/components/download-manager';
 import { Icon } from '@/components/icon';
 import { resolveSource, useAppStore } from '@/lib/store';
+import { qualityKey } from '@/lib/quality';
 import {
   clearProgress,
   progressKeyOf,
@@ -237,6 +238,14 @@ function WatchContent() {
                   onPause={handlePause}
                   onEnded={handleEnded}
                   onRequestSwitchSource={() => setSwitchOpen(true)}
+                  // 播放器实测分辨率回写到「源 + 影片」的画质缓存：权威值，
+                  // 会覆盖服务端探测得到的推断值（from: 'play'）
+                  onQuality={(height) => {
+                    if (!sourceKey || !vodId) return;
+                    useAppStore.getState().setQuality({
+                      [qualityKey(sourceKey, vodId)]: { height, from: 'play', timestamp: Date.now() },
+                    });
+                  }}
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">

@@ -1,6 +1,6 @@
 'use client';
 
-import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload } from './types';
+import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, QualityProbeItem, QualityProbeResult } from './types';
 
 /**
  * 客户端 API 封装。设置类接口返回 401/503 时触发全局事件打开设置解锁框
@@ -259,6 +259,49 @@ export const api = {
       if (!text) return;
       try {
         onResult(JSON.parse(text) as LiveProbeResult);
+      } catch {
+        // 坏行跳过，不影响其余结果
+      }
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buffer.indexOf('\n')) >= 0) {
+        consume(buffer.slice(0, idx));
+        buffer = buffer.slice(idx + 1);
+      }
+    }
+    buffer += decoder.decode();
+    consume(buffer);
+  },
+
+  /**
+   * 流式画质探测：服务端以 NDJSON 逐条推送，先探完的源先回写徽章。
+   * 一条结果都没有也不报错（取消时静默返回），由调用方按已有缓存展示。
+   */
+  qualityProbeStream: async (
+    items: QualityProbeItem[],
+    onResult: (result: QualityProbeResult) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const res = await fetch('/api/quality?stream=1', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items }),
+      signal,
+    });
+    if (!res.ok || !res.body) throw new ApiError(`请求失败 (${res.status})`, res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    const consume = (line: string) => {
+      const text = line.trim();
+      if (!text) return;
+      try {
+        onResult(JSON.parse(text) as QualityProbeResult);
       } catch {
         // 坏行跳过，不影响其余结果
       }

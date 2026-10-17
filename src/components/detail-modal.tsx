@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { api } from '@/lib/client-api';
 import type { SearchResultItem, VideoDetail } from '@/lib/types';
 import { buildImageUrl, buildWatchUrl } from '@/lib/utils';
+import { formatRemarks } from '@/lib/remarks';
 import { useAppStore, resolveSource } from '@/lib/store';
 import { useToast } from './toast';
 import { cn } from '@/lib/utils';
@@ -115,7 +116,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
     info?.area && ['地区', info.area],
     info?.director && ['导演', info.director],
     info?.actor && ['主演', info.actor],
-    info?.remarks && ['备注', info.remarks],
+    info?.remarks && ['备注', formatRemarks(info.remarks)],
   ].filter(Boolean) as [string, string][];
 
   return (

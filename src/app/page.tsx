@@ -291,6 +291,7 @@ function HomeContent() {
                     key={group.key}
                     group={group}
                     onOpen={(item) => setDetailItem(item)}
+                    sources={selectedSources}
                   />
                 ))}
               </div>
