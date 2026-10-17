@@ -14,6 +14,20 @@ export const DETAIL_CACHE_TTL = 60 * 1000;
 export type DetailResolveResult = { ok: true; detail: VideoDetail } | { ok: false; blocked?: string };
 
 /**
+ * 接口地址的 origin：详情页降级的最后一级兜底。
+ * 部分源 detail 字段缺失、调用方也没传 baseUrl，但详情页通常就挂在接口同域下，
+ * 用 origin 推导即可继续走 HTML 提取（上游 b6ee1f9）。非法 URL 返回空串，
+ * 交由后续 SSRF 校验/异常处理，避免在构造缓存键时就抛出。
+ */
+function apiOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 视频详情：优先走列表接口 ?ac=videolist&ids=，
  * 拿不到播放地址时（部分源需要爬详情页）降级到 detail 页 HTML 提取。
  * ok=false + blocked 有值表示被 SSRF 拦下（调用方一般映射为 400），
@@ -21,7 +35,7 @@ export type DetailResolveResult = { ok: true; detail: VideoDetail } | { ok: fals
  */
 export async function resolveDetail(id: string, source: SourceConfig, baseUrl = ''): Promise<DetailResolveResult> {
   // 命中 60s 缓存直接返回（仅缓存成功拿到剧集的结果）
-  const detailRootForCache = (source.detail || baseUrl || '').replace(/\/+$/, '');
+  const detailRootForCache = (source.detail || baseUrl || apiOrigin(source.url)).replace(/\/+$/, '');
   const cacheKey = `detail:${source.url}|${detailRootForCache}|${id}`;
   const cached = getCache<VideoDetail>(cacheKey);
   if (cached) {
@@ -52,8 +66,8 @@ export async function resolveDetail(id: string, source: SourceConfig, baseUrl = 
     }
   }
 
-  // 2) 详情页 HTML 提取（detail 地址优先，否则用 API 地址推导）
-  const detailRoot = (source.detail || baseUrl || '').replace(/\/+$/, '');
+  // 2) 详情页 HTML 提取（detail 地址优先，其次 baseUrl，最后回退接口 origin）
+  const detailRoot = (source.detail || baseUrl || apiOrigin(source.url)).replace(/\/+$/, '');
   if (!resolved && detailRoot && /^https?:\/\//.test(detailRoot)) {
     const detailVerdict = await checkUpstreamAllowed(detailRoot);
     if (!detailVerdict.ok) {
