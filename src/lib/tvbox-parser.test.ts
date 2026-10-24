@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES } from './source-list';
 import {
   describeParseStats,
+  isSourceCatalogPayload,
   isTvboxPayload,
   parseSubscriptionJson,
   parseSubscriptionPayload,
@@ -209,6 +210,86 @@ describe('parseSubscriptionPayload', () => {
   it('两种格式都不匹配时抛格式错误', () => {
     expect(() => parseSubscriptionPayload({ name: '空的' })).toThrow(/格式不正确/);
     expect(() => parseSubscriptionPayload(null)).toThrow(/格式不正确/);
+  });
+});
+
+describe('接口目录（source-catalog）', () => {
+  const api = (host: string) => `https://${host}/api.php/provide/vod`;
+
+  it('识别：非空裸数组且每个条目都带 baseUrl', () => {
+    expect(isSourceCatalogPayload([{ baseUrl: api('a.example.com') }])).toBe(true);
+    expect(isSourceCatalogPayload([{ url: api('a.example.com') }])).toBe(false);
+    expect(isSourceCatalogPayload([{ baseUrl: api('a.example.com') }, { url: api('b.example.com') }])).toBe(false);
+    expect(isSourceCatalogPayload([])).toBe(false);
+    expect(isSourceCatalogPayload({ sites: [] })).toBe(false);
+  });
+
+  it('解析为点播源，名称缺省用主机名，格式标记为 source-catalog', () => {
+    const result = parseSubscriptionPayload([
+      { name: '接口A', baseUrl: api('a.example.com') },
+      { baseUrl: `${api('b.example.com')}/` },
+    ]);
+
+    expect(result.stats?.format).toBe('source-catalog');
+    expect(result.name).toBeUndefined();
+    expect(result.sources).toEqual([
+      { name: '接口A', url: api('a.example.com') },
+      { name: 'b.example.com', url: api('b.example.com') },
+    ]);
+    expect(result.liveSources).toEqual([]);
+  });
+
+  it('enabled: false 的条目跳过并计入「已停用」，缺省视为启用', () => {
+    const result = parseSubscriptionPayload([
+      { name: '可用', baseUrl: api('a.example.com') },
+      { name: '停用', baseUrl: api('b.example.com'), enabled: false },
+      { name: '显式启用', baseUrl: api('c.example.com'), enabled: true },
+    ]);
+
+    expect(result.sources.map((s) => s.name)).toEqual(['可用', '显式启用']);
+    expect(result.stats).toMatchObject({
+      format: 'source-catalog',
+      skipped: 1,
+      skippedByReason: { disabled: 1 },
+      skippedSamples: ['停用'],
+      truncated: 0,
+    });
+  });
+
+  it('非法 baseUrl 计入「地址不可用」，重复地址按归一化后去重', () => {
+    const result = parseSubscriptionPayload([
+      { name: '坏地址', baseUrl: 'ftp://a.example.com/vod' },
+      { name: '重复A', baseUrl: api('dup.example.com') },
+      { name: '重复B', baseUrl: `${api('dup.example.com')}?#` },
+    ]);
+
+    expect(result.sources).toEqual([{ name: '重复A', url: api('dup.example.com') }]);
+    expect(result.stats?.skipped).toBe(1);
+    expect(result.stats?.skippedByReason).toEqual({ invalidUrl: 1 });
+  });
+
+  it('超出上限时截断并计数', () => {
+    const entries = Array.from({ length: MAX_VOD_SOURCES + 5 }, (_, i) => ({
+      baseUrl: `https://vod${i}.example.com/api.php/provide/vod`,
+    }));
+
+    const result = parseSubscriptionPayload(entries);
+
+    expect(result.sources).toHaveLength(MAX_VOD_SOURCES);
+    expect(result.stats?.truncated).toBe(5);
+  });
+
+  it('混用 baseUrl 与 url 时直接报错，不静默丢条目', () => {
+    expect(() =>
+      parseSubscriptionPayload([{ baseUrl: api('a.example.com') }, { url: api('b.example.com') }])
+    ).toThrow(/混用了 baseUrl 与 url/);
+  });
+
+  it('全部条目都不可导入时报错并给出原因明细', () => {
+    expect(() =>
+      parseSubscriptionPayload([{ name: '停用', baseUrl: api('a.example.com'), enabled: false }])
+    ).toThrow(/已跳过 1 个条目（已停用 1）/);
+    expect(() => parseSubscriptionPayload([{ baseUrl: '' }])).toThrow(/已跳过 1 个条目（地址不可用 1）/);
   });
 });
 

@@ -207,13 +207,15 @@ export type SubscriptionSkipReason =
   | 'unsearchable'
   /** 直播源不是 M3U 播放列表（如 txt 频道列表、单仓 JSON） */
   | 'nonM3uLive'
+  /** 接口目录中发布者主动停用的条目（enabled: false） */
+  | 'disabled'
   /** 地址非法、非 http(s) 或未通过服务端公网校验 */
   | 'invalidUrl';
 
 /** 订阅解析统计：说明跳过与截断情况，用于导入结果提示 */
 export interface SubscriptionParseStats {
   /** 识别出的订阅格式 */
-  format: 'libretv' | 'tvbox';
+  format: 'libretv' | 'tvbox' | 'source-catalog';
   /** 被跳过的条目总数 */
   skipped: number;
   /** 跳过原因分类计数 */

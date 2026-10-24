@@ -14,12 +14,13 @@ export const MAX_VOD_SOURCES = 100;
 export const MAX_LIVE_SOURCES = 50;
 
 /**
- * 订阅地址统一形态：trim 并去掉尾部斜杠。
+ * 订阅地址统一形态：trim，去掉尾部空的 `?` / `#` 与斜杠。
  * 手动输入与预置订阅（DEFAULT_SUBSCRIPTIONS）都必须走这一步——
- * 否则同一地址带不带尾斜杠会被存成两条订阅（不同 key 前缀、重复同步、重复拉取）。
+ * 否则同一地址带不带尾斜杠、尾随一个空 `?` 会被存成两条订阅
+ * （不同 key 前缀、重复同步、重复拉取）。
  */
 export function normalizeSubscriptionUrl(raw: string): string {
-  return raw.trim().replace(/\/+$/, '');
+  return raw.trim().replace(/[?#]+$/, '').replace(/\/+$/, '');
 }
 
 interface RawItem {
@@ -33,18 +34,23 @@ interface RawItem {
 /**
  * 规范化为 http(s) 地址；trimTrailingSlash 控制是否去掉尾部斜杠（点播去、直播保留）。
  * 导出供 tvbox-parser 复用，保证两种订阅格式的归一化规则完全一致。
+ *
+ * 尾部空的 `?` / `#` 一并剥掉：`.../vod?`、`.../vod#`、`.../vod` 是同一个接口，
+ * 共享配置里这类残留很常见，不归一化会被当成两个源重复导入。
+ * 只剥「结尾处连续的空查询/锚点」，带参数的地址（`...?ac=list`）不受影响。
  */
 export function normalizeUrl(raw: unknown, trimTrailingSlash: boolean): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   if (!/^https?:\/\//i.test(trimmed)) return undefined;
+  const withoutEmptyTail = trimmed.replace(/[?#]+$/, '');
   try {
-    new URL(trimmed);
+    new URL(withoutEmptyTail);
   } catch {
     return undefined;
   }
-  return trimTrailingSlash ? trimmed.replace(/\/+$/, '') : trimmed;
+  return trimTrailingSlash ? withoutEmptyTail.replace(/\/+$/, '') : withoutEmptyTail;
 }
 
 export function optionalString(raw: unknown): string | undefined {

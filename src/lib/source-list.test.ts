@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_LIVE_SOURCES, MAX_VOD_SOURCES, normalizeSubscriptionUrl, parseSourceListPayload } from './source-list';
+import {
+  MAX_LIVE_SOURCES,
+  MAX_VOD_SOURCES,
+  normalizeSubscriptionUrl,
+  normalizeUrl,
+  parseSourceListPayload,
+} from './source-list';
 
 const vod = (url: string, extra: Record<string, unknown> = {}) => ({ name: `源 ${url}`, url, ...extra });
 const live = (url: string, extra: Record<string, unknown> = {}) => ({ name: `频道 ${url}`, url, ...extra });
@@ -138,11 +144,51 @@ describe('parseSourceListPayload', () => {
   });
 });
 
+describe('normalizeUrl', () => {
+  it('剥掉尾部空的 ? / # 与斜杠，让同一接口只留一条', () => {
+    expect(normalizeUrl('https://a.example.com/api.php/provide/vod?', true)).toBe(
+      'https://a.example.com/api.php/provide/vod'
+    );
+    expect(normalizeUrl('https://a.example.com/api.php/provide/vod#', true)).toBe(
+      'https://a.example.com/api.php/provide/vod'
+    );
+    expect(normalizeUrl('https://a.example.com/api.php/provide/vod?#', true)).toBe(
+      'https://a.example.com/api.php/provide/vod'
+    );
+    expect(normalizeUrl('https://a.example.com/api.php/provide/vod/?', true)).toBe(
+      'https://a.example.com/api.php/provide/vod'
+    );
+  });
+
+  it('带参数的地址与合法片段不受影响', () => {
+    expect(normalizeUrl('https://a.example.com/vod?ac=list', true)).toBe('https://a.example.com/vod?ac=list');
+    expect(normalizeUrl('https://a.example.com/live.m3u?token=abc#t=10', false)).toBe(
+      'https://a.example.com/live.m3u?token=abc#t=10'
+    );
+  });
+
+  it('协议与合法性校验不变', () => {
+    expect(normalizeUrl('ftp://a.example.com/vod', true)).toBeUndefined();
+    expect(normalizeUrl('   ', true)).toBeUndefined();
+    expect(normalizeUrl(null, true)).toBeUndefined();
+  });
+});
+
 describe('normalizeSubscriptionUrl', () => {
   it('trim + 去掉尾部斜杠', () => {
     expect(normalizeSubscriptionUrl('  https://a.example.com/sub/  ')).toBe('https://a.example.com/sub');
     expect(normalizeSubscriptionUrl('https://b.example.com/sub///')).toBe('https://b.example.com/sub');
     expect(normalizeSubscriptionUrl('https://c.example.com/sub')).toBe('https://c.example.com/sub');
+  });
+
+  it('尾部空的 ? / # 与预置订阅走同一形态，避免两处归一化规则分叉', () => {
+    expect(normalizeSubscriptionUrl('https://a.example.com/list.json?')).toBe('https://a.example.com/list.json');
+    expect(normalizeSubscriptionUrl('https://a.example.com/list.json#')).toBe('https://a.example.com/list.json');
+    expect(normalizeSubscriptionUrl('https://a.example.com/list.json/?')).toBe('https://a.example.com/list.json');
+    // 带参数的地址不受影响
+    expect(normalizeSubscriptionUrl('https://a.example.com/list.json?token=abc')).toBe(
+      'https://a.example.com/list.json?token=abc'
+    );
   });
 
   it('空字符串返回空串', () => {

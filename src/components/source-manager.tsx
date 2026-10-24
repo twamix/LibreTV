@@ -606,7 +606,8 @@ function AdultUnlockPanel() {
 
 /**
  * 数据源订阅 / 分享：
- * - 订阅：填入远程 LibreTV-SourceList JSON 地址，一次拉取点播源与直播源，可随时重新同步；
+ * - 订阅：填入远程订阅地址（LibreTV-SourceList JSON、TVBOX 配置 JSON 或接口目录 JSON，
+ *   由服务端自动识别），一次拉取点播源与直播源，可随时重新同步；
  * - 分享：把当前点播源 + 直播源导出为同格式 JSON 文件，托管到任意位置即可被他人订阅。
  */
 function SourceSubscriptions() {
@@ -629,7 +630,13 @@ function SourceSubscriptions() {
     try {
       const { vodCount, liveCount, stats } = await syncSourceSubscription(url);
       const notice = describeParseStats(stats, { includeSamples: false });
-      toast(`已同步 ${vodCount} 个点播源、${liveCount} 个直播源${notice ? '：' + notice : ''}`, 'success');
+      const formatLabel =
+        stats?.format === 'tvbox'
+          ? '（TVBOX 配置）'
+          : stats?.format === 'source-catalog'
+            ? '（接口源列表）'
+            : '';
+      toast(`已同步 ${vodCount} 个点播源、${liveCount} 个直播源${formatLabel}${notice ? `；${notice}` : ''}`, 'success');
       setSubUrl('');
     } catch (err) {
       toast(err instanceof Error ? err.message : '订阅同步失败', 'error');

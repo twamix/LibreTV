@@ -1,6 +1,15 @@
 'use client';
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/lib/store';
@@ -69,6 +78,80 @@ function useDebouncedValue<T>(value: T, delay: number): T {
   return debounced;
 }
 
+/**
+ * 分组标签条：鼠标按住拖动横向滚动 + 左右边缘渐隐。
+ *
+ * PC 上这条带子只能靠滚动条：`.scrollbar-thin` 把轨道压到 6px 高，
+ * 分组一多滑块还会变短，实际点不中（issue #948），所以补一套拖拽。
+ * 触摸设备不接管：原生滑动带惯性，比手动跟手好。
+ */
+function useChipStrip(itemCount: number) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [edges, setEdges] = useState({ left: false, right: false });
+  const drag = useRef({ startX: 0, startLeft: 0, moved: false });
+
+  // 边缘渐隐：没有它，用户不知道右边还藏着分组
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const left = el.scrollLeft > 4;
+      const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+      // 拖动时 scroll 事件很密：值没变就复用旧对象，避免每帧重渲染整个频道列表
+      setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', update);
+      ro.disconnect();
+    };
+  }, [itemCount]);
+
+  // 拖动过程挂 document，而不是 setPointerCapture：
+  // 一旦捕获指针，click 会被重定向到容器，点分组就失效了
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: PointerEvent) => {
+      const el = ref.current;
+      if (!el) return;
+      const dx = e.clientX - drag.current.startX;
+      if (!drag.current.moved && Math.abs(dx) > 3) drag.current.moved = true;
+      if (drag.current.moved) el.scrollLeft = drag.current.startLeft - dx;
+    };
+    const onUp = () => setDragging(false);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    document.addEventListener('pointercancel', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+      document.removeEventListener('pointercancel', onUp);
+    };
+  }, [dragging]);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    const el = ref.current;
+    if (!el) return;
+    drag.current = { startX: e.clientX, startLeft: el.scrollLeft, moved: false };
+    setDragging(true);
+  };
+
+  // 拖完松手仍会触发一次 click，不能让它落到分组按钮上（等于误切分组）
+  const onClickCapture = (e: ReactMouseEvent<HTMLDivElement>) => {
+    if (!drag.current.moved) return;
+    drag.current.moved = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  return { ref, dragging, edges, onPointerDown, onClickCapture };
+}
+
 export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilteredChange }: ChannelListProps) {
   // 精确订阅：避免任何 store 字段变化（尤其测活节流写回）引发本组件重渲染
   const liveFavorites = useAppStore((s) => s.liveFavorites);
@@ -82,6 +165,8 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
   const [aliveFilter, setAliveFilter] = useState<AliveFilter>('off');
   /** 键盘光标（filtered 的下标），与"正在播放"高亮独立 */
   const [cursor, setCursor] = useState(-1);
+  /** 分组标签条的拖拽滚动与边缘渐隐 */
+  const chipStrip = useChipStrip(groups.length);
   const listRef = useRef<HTMLDivElement>(null);
   const {
     results: probeResults,
@@ -345,14 +430,32 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
         )}
       </div>
 
-      {/* 分组标签条（横向可滑动） */}
+      {/* 分组标签条（横向可滑动：滚轮/滚动条之外，鼠标可直接拖动） */}
       {view === 'all' && groups.length > 0 && (
         <div className="px-3 pb-2 shrink-0">
-          <div className="flex gap-1.5 overflow-x-auto scrollbar-thin pb-1">
-            <GroupChip active={!group} label="全部分组" onClick={() => setGroup('')} />
-            {groups.map((g) => (
-              <GroupChip key={g} active={group === g} label={g} onClick={() => setGroup(g === group ? '' : g)} />
-            ))}
+          <div className="relative">
+            <div
+              ref={chipStrip.ref}
+              onPointerDown={chipStrip.onPointerDown}
+              onClickCapture={chipStrip.onClickCapture}
+              className={cn(
+                // select-none 常驻：拖动时若允许选字，会变成"选中标签文字"而不是滚动
+                'flex gap-1.5 overflow-x-auto scrollbar-thin pb-1 select-none',
+                chipStrip.dragging ? 'cursor-grabbing' : 'cursor-grab'
+              )}
+            >
+              <GroupChip active={!group} label="全部分组" onClick={() => setGroup('')} />
+              {groups.map((g) => (
+                <GroupChip key={g} active={group === g} label={g} onClick={() => setGroup(g === group ? '' : g)} />
+              ))}
+            </div>
+            {/* 左右渐隐：提示这一栏还能横向拖动 */}
+            {chipStrip.edges.left && (
+              <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-surface-raised to-transparent" />
+            )}
+            {chipStrip.edges.right && (
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-surface-raised to-transparent" />
+            )}
           </div>
         </div>
       )}
