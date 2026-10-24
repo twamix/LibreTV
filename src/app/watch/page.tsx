@@ -238,6 +238,11 @@ function WatchContent() {
                   onPause={handlePause}
                   onEnded={handleEnded}
                   onRequestSwitchSource={() => setSwitchOpen(true)}
+                  // 控制条上的上/下集：全屏看剧时不必退出全屏再回页面下方找按钮
+                  hasPrevEpisode={currentIndex > 0}
+                  hasNextEpisode={episodes.length > 0 && currentIndex < episodes.length - 1}
+                  onPrevEpisode={() => goEpisode(currentIndex - 1)}
+                  onNextEpisode={() => goEpisode(currentIndex + 1)}
                   // 播放器实测分辨率回写到「源 + 影片」的画质缓存：权威值，
                   // 会覆盖服务端探测得到的推断值（from: 'play'）
                   onQuality={(height) => {

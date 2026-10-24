@@ -280,44 +280,70 @@ export const api = {
   /**
    * 流式画质探测：服务端以 NDJSON 逐条推送，先探完的源先回写徽章。
    * 一条结果都没有也不报错（取消时静默返回），由调用方按已有缓存展示。
+   *
+   * 传输层失败（请求没发出去 / 流中途断开）不原样冒泡：调用方原先只能静默成
+   * 「未探到」，线上出问题时无法区分「网关拦了」「容器崩了」「探测本身失败」。
+   * 服务端开流即写一行 {ping:true} 心跳，收到过首字节说明请求确实进了应用。
    */
   qualityProbeStream: async (
     items: QualityProbeItem[],
     onResult: (result: QualityProbeResult) => void,
     signal?: AbortSignal
   ): Promise<void> => {
-    const res = await fetch('/api/quality?stream=1', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-      signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch('/api/quality?stream=1', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items }),
+        signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      throw new ApiError('探测请求没能送达服务器（网络或反向代理中断）', 0);
+    }
     if (!res.ok || !res.body) throw new ApiError(`请求失败 (${res.status})`, res.status);
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    // 心跳行不是结果：收到它就证明请求确实进了 Next，后续失败才归因于探测本身
+    let firstByte = false;
     const consume = (line: string) => {
       const text = line.trim();
       if (!text) return;
       try {
-        onResult(JSON.parse(text) as QualityProbeResult);
+        const event = JSON.parse(text) as QualityProbeResult | { ping: true };
+        firstByte = true;
+        if ('ping' in event) return;
+        onResult(event);
       } catch {
         // 坏行跳过，不影响其余结果
       }
     };
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let idx: number;
-      while ((idx = buffer.indexOf('\n')) >= 0) {
-        consume(buffer.slice(0, idx));
-        buffer = buffer.slice(idx + 1);
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        firstByte = true;
+        buffer += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) >= 0) {
+          consume(buffer.slice(0, idx));
+          buffer = buffer.slice(idx + 1);
+        }
       }
+      buffer += decoder.decode();
+      consume(buffer);
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      throw new ApiError(
+        firstByte
+          ? '探测连接中途被断开（已收到部分结果，多为网关超时）'
+          : '探测请求被网关拦截（未收到任何响应）',
+        0
+      );
     }
-    buffer += decoder.decode();
-    consume(buffer);
   },
 };
 

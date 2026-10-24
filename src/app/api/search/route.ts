@@ -86,7 +86,10 @@ export async function POST(req: Request) {
         sources.map(async (source, i) => {
           const outcome = await searchSource(source, wd);
           outcomes[i] = outcome;
-          send({ type: 'source', ...outcome });
+          // 中间结果与最终结果共用同一套去重/相关性/成人过滤规则：
+          // 否则无关条目（乃至成人条目）会先闪现，done 事件到达后又消失
+          const { list } = aggregateOutcomes([outcome], wd, filterAdult);
+          send({ type: 'source', ...outcome, list });
         })
       );
 

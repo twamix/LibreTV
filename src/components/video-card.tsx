@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { QualityEntry, SearchResultItem, SourceConfig } from '@/lib/types';
-import { api } from '@/lib/client-api';
+import { ApiError, api } from '@/lib/client-api';
 import { buildImageUrl } from '@/lib/utils';
 import { readQualities, useAppStore } from '@/lib/store';
 import { QUALITY_FAIL_TTL_MS, qualityKey, qualityLabel } from '@/lib/quality';
@@ -244,8 +244,21 @@ export function AggregatedCard({
         },
         controller.signal
       )
-      .catch(() => {
-        // 探测整批失败（离线/未登录）或被新一轮掐掉：保持「未知」，不打断选源
+      .catch((err: unknown) => {
+        // 主动中止（新批接管 / 组件卸载）不是探测结论，保持「未知」
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // 未登录：登录框已弹出，把每个源都标成失败只会误导
+        if (err instanceof ApiError && (err.status === 401 || err.status === 503)) return;
+        // 传输层失败（网关拦截 / 容器重启 / 断网）：逐条落成失败结论，徽章上能看出原因。
+        // 原先这里静默吞掉，界面只剩一片「未探到」，线上无从判断是哪一环挂了。
+        const message = err instanceof Error && err.message ? err.message : '探测请求失败';
+        const at = Date.now();
+        for (const key of keys) {
+          if (collected[key]) continue;
+          collected[key] = { from: 'probe', error: message, timestamp: at };
+          settledRef.current.set(key, at);
+        }
+        setQualities((prev) => ({ ...prev, ...collected }));
       })
       .finally(() => {
         // 一次性写入全局缓存：同一部剧在别处（换源面板、再次搜索）也能复用。

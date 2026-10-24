@@ -53,6 +53,11 @@ interface PlayerShellProps {
   onQuality?: (height: number) => void;
   /** 恢复策略判源不可用（重试耗尽/格式硬失败）时回调：父级弹出换源面板 */
   onRequestSwitchSource?: (reason: string) => void;
+  /** 控制条上的上一集 / 下一集：全屏看剧时不必退出全屏去页面下方找按钮 */
+  onPrevEpisode?: () => void;
+  onNextEpisode?: () => void;
+  hasPrevEpisode?: boolean;
+  hasNextEpisode?: boolean;
 }
 
 export function PlayerShell({
@@ -69,6 +74,10 @@ export function PlayerShell({
   onPause,
   onQuality,
   onRequestSwitchSource,
+  onPrevEpisode,
+  onNextEpisode,
+  hasPrevEpisode,
+  hasNextEpisode,
 }: PlayerShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -84,10 +93,12 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
+    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
+    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode,
   };
 
   /** 上报实测画质：多次上报取大值由调用方决定，这里只管把拿到的高度传出去 */
@@ -353,6 +364,30 @@ export function PlayerShell({
       theme: '#2563eb',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
+      // 上/下集放在播放键右侧：换集是看剧最高频的动作，全屏时不该让人退出全屏
+      // 再去页面下方找按钮。窄屏下由 globals.css 收起（见 .art-control-prev-episode）
+      controls: [
+        {
+          name: 'prev-episode',
+          index: 11,
+          position: 'left',
+          html: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6V6zm3.5 6l8.5 6V6l-8.5 6z"/></svg>',
+          tooltip: '上一集 (Alt+←)',
+          click: () => {
+            if (propsRef.current.hasPrevEpisode) propsRef.current.onPrevEpisode?.();
+          },
+        },
+        {
+          name: 'next-episode',
+          index: 12,
+          position: 'left',
+          html: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24"><path fill="currentColor" d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>',
+          tooltip: '下一集 (Alt+→)',
+          click: () => {
+            if (propsRef.current.hasNextEpisode) propsRef.current.onNextEpisode?.();
+          },
+        },
+      ],
       customType: {
         m3u8: (video: HTMLVideoElement, mediaUrl: string) => {
           setupHls(video, mediaUrl, true);
@@ -578,6 +613,22 @@ export function PlayerShell({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // —— 上/下集禁用态：走 ArtPlayer 的 controls API，不直接改 DOM ——
+  // 直接 querySelector 改 style 在控件重建（切全屏/播放器重绘）后不会恢复，
+  // 而且依赖 ArtPlayer 内部 class 名。url 变化时重算一次：换集后首/末集状态会变。
+  useEffect(() => {
+    const controls = artRef.current?.controls;
+    if (!controls) return;
+    controls.update({
+      name: 'prev-episode',
+      style: { opacity: hasPrevEpisode ? '1' : '0.4', pointerEvents: hasPrevEpisode ? 'auto' : 'none' },
+    });
+    controls.update({
+      name: 'next-episode',
+      style: { opacity: hasNextEpisode ? '1' : '0.4', pointerEvents: hasNextEpisode ? 'auto' : 'none' },
+    });
+  }, [hasPrevEpisode, hasNextEpisode, url]);
 
   // —— 换集：仅切换 HLS 源，不重建播放器（保留网页全屏等状态） ——
   const firstUrlRef = useRef(true);
