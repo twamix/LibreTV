@@ -473,6 +473,28 @@ export function PlayerShell({
       propsRef.current.onEnded?.();
     });
 
+    /**
+     * 倍速跨集保持（上游 09b70ce，issue #955）。
+     *
+     * 换源会让媒体元素重新走一遍 load 算法，而该算法只动一个播放属性：
+     * `playbackRate = defaultPlaybackRate`。所以只要让 defaultPlaybackRate 始终
+     * 等于用户选的倍速，这次「归位」就变成空操作——一次覆盖全部重载路径：
+     * 换集、直连失败转代理、video:error 重建，以及 hls.js 内部
+     * recoverMediaError 的 detach/attach（那条路径不经过 setupHls，
+     * 只在 loadEpisode 里补写 playbackRate 是够不着的）。
+     *
+     * 判断条件是必需的，不是防御性代码：归位本身会派发 ratechange（实测 rate=1），
+     * 无差别同步会把默认值自己写成 1，机制当场失效；「新值等于默认值则跳过」
+     * 正好把归位排除在外。长按 3 倍速也安全：按住时默认值跟随到 3，
+     * 松手回写 originalRate 时再跟回来，瞬态不会污染下一集。
+     */
+    art.on('video:ratechange', () => {
+      const video = art.video;
+      if (video && video.playbackRate !== video.defaultPlaybackRate) {
+        video.defaultPlaybackRate = video.playbackRate;
+      }
+    });
+
     // —— 键盘快捷键（旧版 hotkey:false + 自定义逻辑的移植） ——
     const shortcuts = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
