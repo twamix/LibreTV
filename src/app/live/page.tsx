@@ -58,6 +58,7 @@ function LiveContent() {
   const liveFavorites = useAppStore((s) => s.liveFavorites);
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const volumeBoost = useAppStore((s) => s.volumeBoost);
   const [copied, setCopied] = useState(false);
   // 移动端频道抽屉开合
   const [listOpen, setListOpen] = useState(false);
@@ -231,6 +232,7 @@ function LiveContent() {
                   title={currentChannel?.name || '直播'}
                   onPrevChannel={goPrevChannel}
                   onNextChannel={goNextChannel}
+                  volumeBoost={volumeBoost}
                 />
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center gap-2 bg-black">

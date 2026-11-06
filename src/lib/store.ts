@@ -24,6 +24,12 @@ export interface AppSettings {
   /** 用户是否在设置中主动选择过推荐数据源；为 false 时部署者的 DEFAULT_RECOMMEND_SOURCE 默认值可生效 */
   recommendSourceTouched: boolean;
   autoplayNext: boolean;
+  /**
+   * 音量放大（Web Audio 增益链，约 1.8 倍）：默认关闭。
+   * 增益与 video.volume 相乘，对所有音量档位生效、会整体抬高响度，
+   * 因此只作为用户显式开启的兜底，不作为出厂默认。
+   */
+  volumeBoost: boolean;
   imageProxyMode: 'direct' | 'proxy' | 'custom';
   /** 用户是否在设置中主动选择过封面图加载方式；为 false 时部署者的 DEFAULT_IMAGE_MODE 默认值可生效 */
   imageProxyModeTouched: boolean;
@@ -293,6 +299,8 @@ export const useAppStore = create<AppState>()(
       recommendSource: 'douban',
       recommendSourceTouched: false,
       autoplayNext: true,
+      // 音量放大默认关闭：开启后对所有音量档位整体抬高约 1.8 倍，交给用户显式选择
+      volumeBoost: false,
       imageProxyMode: 'proxy',
       imageProxyModeTouched: false,
       customImageProxy: '',
@@ -729,6 +737,7 @@ export const useAppStore = create<AppState>()(
         recommendSource: s.recommendSource,
         recommendSourceTouched: s.recommendSourceTouched,
         autoplayNext: s.autoplayNext,
+        volumeBoost: s.volumeBoost,
         imageProxyMode: s.imageProxyMode,
         imageProxyModeTouched: s.imageProxyModeTouched,
         customImageProxy: s.customImageProxy,

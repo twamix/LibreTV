@@ -14,6 +14,7 @@ import { loadCacheSettings } from '@/lib/video-cache';
 import { PROXY_BASE } from '@/lib/m3u8';
 import { formatTime } from '@/lib/utils';
 import { prefersTouchPointer } from '@/lib/touch-pointer';
+import { attachVolumeBoost, type VolumeBoostHandle } from '@/lib/volume-boost';
 import {
   ART_DEFAULT_CONTROL_HIDE_MS,
   DESKTOP_CONTROL_HIDE_MS,
@@ -58,6 +59,11 @@ interface PlayerShellProps {
   onNextEpisode?: () => void;
   hasPrevEpisode?: boolean;
   hasNextEpisode?: boolean;
+  /**
+   * 音量放大（Web Audio 增益链）：默认 false。
+   * 关闭时完全不接入音频链路；播放中改开关由 setBoost 走「直通/增益」切换。
+   */
+  volumeBoost?: boolean;
 }
 
 export function PlayerShell({
@@ -78,6 +84,7 @@ export function PlayerShell({
   onNextEpisode,
   hasPrevEpisode,
   hasNextEpisode,
+  volumeBoost = false,
 }: PlayerShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,18 +100,21 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
-    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode,
+    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode, volumeBoost,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onQuality, onRequestSwitchSource,
-    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode,
+    onPrevEpisode, onNextEpisode, hasPrevEpisode, hasNextEpisode, volumeBoost,
   };
 
   /** 上报实测画质：多次上报取大值由调用方决定，这里只管把拿到的高度传出去 */
   const reportQuality = (height: number) => {
     if (height > 0) propsRef.current.onQuality?.(height);
   };
+
+  /** 音量放大句柄：换集不重建播放器，句柄跨集复用；卸载时 dispose */
+  const volumeBoostRef = useRef<VolumeBoostHandle | null>(null);
 
   // 跨集共享、每次换集重置的播放链路状态
   // 媒体健康度：音频轨可播不代表视频轨正常（「黑屏但有声」的假死态）。
@@ -395,6 +405,13 @@ export function PlayerShell({
       },
     });
     artRef.current = art;
+    // 音量放大：起播后（src 已就绪）才挂 Web Audio 增益图，避免空 src / CORS 误判。
+    // 默认关闭（设置项 volumeBoost）：不接入时完全不碰音频链路。
+    // 纯附加：不改动 ArtPlayer 的 volume/滑块/快捷键；失败时原样播放。
+    art.on('video:playing', () => {
+      if (!propsRef.current.volumeBoost || volumeBoostRef.current) return;
+      volumeBoostRef.current = attachVolumeBoost(art.video);
+    });
     /**
      * 只有 video 元素的 videoHeight 是真的——这是「播放一次即记住画质」链路的唯一数据源。
      * loadedmetadata 在部分浏览器上 videoHeight 仍为 0，因此 resize / canplay / playing
@@ -629,12 +646,28 @@ export function PlayerShell({
       hlsRef.current?.destroy();
       hlsRef.current = null;
       recoveryRef.current?.dispose();
+      volumeBoostRef.current?.dispose();
+      volumeBoostRef.current = null;
       getVideoPrefetcher().stop();
       art.destroy();
       artRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // —— 音量放大开关：播放中改设置即时生效，不必等重新起播 ——
+  // 关闭走「单位增益直通」而不是拆链：createMediaElementSource 之后元素输出只走
+  // 音频图，拆链会永久静音且无法恢复直连，所以只旁路增益与限幅。
+  useEffect(() => {
+    const video = artRef.current?.video as HTMLVideoElement | undefined;
+    if (!video) return;
+    if (volumeBoost) {
+      volumeBoostRef.current = attachVolumeBoost(video) ?? volumeBoostRef.current;
+      volumeBoostRef.current?.setBoost(true);
+    } else {
+      volumeBoostRef.current?.setBoost(false);
+    }
+  }, [volumeBoost]);
 
   // —— 上/下集禁用态：走 ArtPlayer 的 controls API，不直接改 DOM ——
   // 直接 querySelector 改 style 在控件重建（切全屏/播放器重绘）后不会恢复，
