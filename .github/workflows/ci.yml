@@ -1,0 +1,48 @@
+name: ci
+
+# PR 与 main 推送都跑静态检查与单测。
+#
+# 此前仓库里只有 docker-publish，它的触发条件是 tag 或手动——唯一的 `npm test`
+# 藏在镜像构建里，等于「发版才发现」。参考上游 f7852b8 补上这一层：
+# 类型错误、lint、单测失败在 PR 阶段就该被拦住，而不是等到打 tag。
+#
+# Node 版本与 Dockerfile 的 node:22-alpine 保持同一条主线：服务端行为
+# （内置 fetch、undici 等）在不同大版本间有差异，不要在 CI 里悄悄换版本。
+
+on:
+  pull_request:
+    branches: ['main']
+  push:
+    branches: ['main']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支的新推送取消旧运行：只关心最新一次的结果
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test

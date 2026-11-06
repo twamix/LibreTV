@@ -7,6 +7,21 @@ import { SESSION_COOKIE, signSession } from '@/lib/auth';
  * 上游一律用 mock fetch，不产生真实网络请求。
  */
 
+/**
+ * DNS 一律解析到公网地址，不查真实 DNS。
+ *
+ * 用例里的 iptv.test / fake.test 等是假域名：真解析会走系统 DNS，
+ * 本机对 NXDOMAIN 要等约 11s（Windows 上尤其明显），整文件 12 个用例
+ * 因此逐个 5s 超时。CI 上同样不该把单测绑在外网与本地 DNS 行为上。
+ * 内网字面量地址（127.0.0.1 / 192.168.x）走 isValidProxyUrl 的本地判断，
+ * 不经过这里，相关用例仍然测的是真实拦截逻辑。
+ */
+vi.mock('node:dns/promises', () => ({
+  default: {
+    lookup: async () => [{ address: '93.184.216.34', family: 4 }],
+  },
+}));
+
 const MASTER = [
   '#EXTM3U',
   '#EXT-X-STREAM-INF:BANDWIDTH=800000,CODECS="hvc1.1.6.L93.B0,mp4a.40.2"',
