@@ -1,6 +1,6 @@
 /** 服务端上游请求工具：超时、重试、安全跳转、JSON 解析 */
 
-import { checkLiveUrlAllowed, checkUpstreamAllowed } from './ssrf';
+import { checkLiveUrlAllowed, checkUpstreamAllowed, runWithSSRFProtection } from './ssrf';
 
 export interface FetchOptions extends RequestInit {
   timeoutMs?: number;
@@ -27,6 +27,27 @@ export interface FetchResult {
   finalUrl: string;
 }
 
+/**
+ * 把连接层 SSRF 拦截错误翻译成可读提示。
+ * 底层抛的是 `TypeError: fetch failed`，真正的原因在 cause.code 里；
+ * 不翻译的话用户只会看到「上游请求失败」这种没有信息量的文案。
+ */
+function normalizeSSRFError(err: unknown): never {
+  if (
+    err &&
+    typeof err === 'object' &&
+    'cause' in err &&
+    err.cause &&
+    typeof err.cause === 'object' &&
+    'code' in err.cause &&
+    (err.cause as { code?: string }).code === 'ERR_SSRF_BLOCKED'
+  ) {
+    const cause = err.cause as { message?: string };
+    throw new Error(`连接目标被拒绝: ${cause.message || '目标地址被拒绝'}`);
+  }
+  throw err;
+}
+
 export async function fetchUpstream(url: string, options: FetchOptions = {}): Promise<Response> {
   return (await fetchUpstreamWithMeta(url, options)).res;
 }
@@ -43,12 +64,19 @@ export async function fetchUpstreamWithMeta(url: string, options: FetchOptions =
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       if (!safeRedirects) {
-        const res = await fetch(url, {
-          ...init,
-          signal,
-          redirect: init.redirect ?? 'follow',
-        });
-        return { res, finalUrl: res.url || url };
+        try {
+          // 自动跟随也要走连接级防护：预检之后 fetch 自己跟的 3xx 同样可能进内网
+          const res = await runWithSSRFProtection({ allowPrivate }, () =>
+            fetch(url, {
+              ...init,
+              signal,
+              redirect: init.redirect ?? 'follow',
+            })
+          );
+          return { res, finalUrl: res.url || url };
+        } catch (err) {
+          normalizeSSRFError(err);
+        }
       }
       // 手动逐跳跟随，每一跳重新过 SSRF 校验
       let current = url;
@@ -59,11 +87,13 @@ export async function fetchUpstreamWithMeta(url: string, options: FetchOptions =
         if (!verdict.ok) {
           throw new Error(`跳转目标被拒绝: ${verdict.reason}`);
         }
-        const res = await fetch(current, {
-          ...init,
-          redirect: 'manual',
-          signal,
-        });
+        const res = await runWithSSRFProtection({ allowPrivate }, () =>
+          fetch(current, {
+            ...init,
+            redirect: 'manual',
+            signal,
+          })
+        ).catch((err: unknown) => normalizeSSRFError(err));
         if (!REDIRECT_STATUSES.has(res.status)) return { res, finalUrl: current };
         const location = res.headers.get('location');
         if (!location) return { res, finalUrl: current };

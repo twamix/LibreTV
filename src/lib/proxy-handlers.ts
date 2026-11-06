@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { jsonError } from '@/lib/api-guard';
-import { checkLiveUrlAllowed, checkUpstreamAllowed, isBlockedByDNS, isValidProxyUrl } from '@/lib/ssrf';
+import {
+  allowLivePrivate,
+  checkLiveUrlAllowed,
+  checkUpstreamAllowed,
+  isBlockedByDNS,
+  isValidProxyUrl,
+  runWithSSRFProtection,
+} from '@/lib/ssrf';
 import { rewriteM3u8 } from '@/lib/m3u8';
 
 /**
@@ -63,11 +70,14 @@ async function proxyFetch(
     if (!verdict.ok) {
       throw new Error(`跳转目标被拒绝: ${verdict.reason}`);
     }
-    const res = await fetch(current, {
-      headers: init.headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
-    });
+    // 连接级防护：预检之后真正建连时再校验一次 DNS，堵住 rebinding 与连接池复用
+    const res = await runWithSSRFProtection({ allowPrivate: false }, () =>
+      fetch(current, {
+        headers: init.headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(PROXY_TIMEOUT_MS),
+      })
+    );
     if (!REDIRECT_STATUSES.has(res.status)) return { res, finalUrl: current };
     const location = res.headers.get('location');
     if (!location) return { res, finalUrl: current };
@@ -248,11 +258,14 @@ async function fetchLiveUpstream(
     const timer = setTimeout(() => controller.abort(), LIVE_HEADER_TIMEOUT_MS);
     let res: Response;
     try {
-      res = await fetch(current, {
-        headers,
-        redirect: 'manual',
-        signal: controller.signal,
-      });
+      // 连接级防护；allowPrivate 跟随部署者的 LIVE_ALLOW_PRIVATE 开关
+      res = await runWithSSRFProtection({ allowPrivate: allowLivePrivate() }, () =>
+        fetch(current, {
+          headers,
+          redirect: 'manual',
+          signal: controller.signal,
+        })
+      );
     } finally {
       clearTimeout(timer);
     }

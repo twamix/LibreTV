@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isBlockedByDNS, isPrivateIP, isValidProxyUrl } from './ssrf';
+import http from 'node:http';
+import { isBlockedByDNS, isPrivateIP, isValidProxyUrl, runWithSSRFProtection } from './ssrf';
 
 describe('isPrivateIP', () => {
   it.each([
@@ -68,5 +69,95 @@ describe('isBlockedByDNS', () => {
     await expect(isBlockedByDNS('http://[::1]/x')).resolves.toBe(true);
     await expect(isBlockedByDNS('http://[::ffff:10.0.0.1]/x')).resolves.toBe(true);
     await expect(isBlockedByDNS('http://[2606:4700:4700::1111]/x')).resolves.toBe(false);
+  });
+});
+
+/**
+ * 连接级防护（参考上游 #941 / #960）：
+ * 请求发出前的 DNS 预检挡不住 rebinding——域名可以先解析到公网，真正建连时
+ * 再解析到内网。这里用本地 HTTP server 做真实连接测试（不 mock fetch），
+ * 因为要验证的正是 socket 连接阶段的行为。
+ */
+describe('连接级 SSRF 防护', () => {
+  /** 起一个只监听 127.0.0.1 的 server，返回端口与关闭函数 */
+  async function startLocalServer(body = 'internal secret data') {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end(body);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const addr = server.address();
+    if (!addr || typeof addr === 'string') throw new Error('意外的地址');
+    return { port: addr.port, close: () => new Promise<void>((r) => server.close(() => r())) };
+  }
+
+  it('拦截直接连接的字面量私网 IP', async () => {
+    const { port, close } = await startLocalServer();
+    try {
+      await expect(
+        runWithSSRFProtection({ allowPrivate: false }, async () => {
+          await fetch(`http://127.0.0.1:${port}/secret`);
+        })
+      ).rejects.toThrow();
+    } finally {
+      await close();
+    }
+  });
+
+  it('拦截解析到私网的主机名（localhost）', async () => {
+    const { port, close } = await startLocalServer();
+    try {
+      await expect(
+        runWithSSRFProtection({ allowPrivate: false }, async () => {
+          await fetch(`http://localhost:${port}/secret`);
+        })
+      ).rejects.toThrow();
+    } finally {
+      await close();
+    }
+  });
+
+  it('allowPrivate: true 时放行内网（自建 IPTV 场景）', async () => {
+    const { port, close } = await startLocalServer('iptv stream data');
+    try {
+      const text = await runWithSSRFProtection({ allowPrivate: true }, async () => {
+        const res = await fetch(`http://127.0.0.1:${port}/live.m3u8`);
+        return res.text();
+      });
+      expect(text).toBe('iptv stream data');
+    } finally {
+      await close();
+    }
+  });
+
+  it('连接池复用不能绕过校验：先放行再严格拦截同一源', async () => {
+    const { port, close } = await startLocalServer('pool test data');
+    try {
+      // 先在 allowPrivate 作用域内建立连接
+      const text = await runWithSSRFProtection({ allowPrivate: true }, async () => {
+        const res = await fetch(`http://127.0.0.1:${port}/first`);
+        return res.text();
+      });
+      expect(text).toBe('pool test data');
+
+      // 随后在严格作用域请求同一源：必须重新校验并拦截，不得复用已有 socket
+      await expect(
+        runWithSSRFProtection({ allowPrivate: false }, async () => {
+          await fetch(`http://127.0.0.1:${port}/second`);
+        })
+      ).rejects.toThrow();
+    } finally {
+      await close();
+    }
+  });
+
+  it('非受保护作用域内不干扰本地网络通信', async () => {
+    const { port, close } = await startLocalServer('normal local communication');
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/status`);
+      expect(await res.text()).toBe('normal local communication');
+    } finally {
+      await close();
+    }
   });
 });

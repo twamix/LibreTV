@@ -1,4 +1,8 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { LookupAddress } from 'node:dns';
+import { lookup as callbackLookup } from 'node:dns';
 import dns from 'node:dns/promises';
+import { Agent, buildConnector } from 'undici';
 
 /** 去掉 URL.hostname 对 IPv6 附加的方括号（"[::1]" → "::1"） */
 function stripBrackets(host: string): string {
@@ -107,4 +111,164 @@ export async function checkLiveUrlAllowed(urlString: string): Promise<UpstreamVe
   }
   if (allowLivePrivate()) return { ok: true };
   return checkUpstreamAllowed(urlString);
+}
+
+// —— 连接级防护：DNS Rebinding / keep-alive 复用绕过 ——
+//
+// 上面的校验只在请求发出前做一次，存在经典 TOCTOU 缺口：域名第一次解析到公网、
+// 真正建连时解析到内网（DNS rebinding），预检拦不住；已建立的 keep-alive 连接
+// 也可能被后续请求复用，完全跳过连接阶段的检查。
+//
+// 这里在 socket 连接层再校验一次，并用 AsyncLocalStorage 把作用范围限定在
+// 「由用户输入驱动的出网请求」内，不对全局网络请求产生副作用。
+
+export interface SSRFProtectionContext {
+  active: boolean;
+  allowPrivate?: boolean;
+}
+
+const ssrfStorage = new AsyncLocalStorage<SSRFProtectionContext>();
+
+/**
+ * 创建受连接级 SSRF / DNS Rebinding 防护的专用 undici Agent。
+ *
+ * 1. 独立 Dispatcher：不复用全局/其他作用域的连接池，杜绝 keep-alive socket 绕过；
+ * 2. 连接前检查：字面量私网 IP 与黑名单主机名直接拒绝；
+ * 3. 连接时 DNS 校验：用回调版 node:dns 解析，命中私网/保留地址即中断连接；
+ * 4. 关闭连接保活：用完即释放，不留复用窗口。
+ *
+ * 注意：连接层的 lookup 必须用回调式 `node:dns`（callbackLookup）。
+ * 曾按回调签名误用 `dns/promises`，导致受保护域内所有出网请求挂到超时。
+ */
+export function createSSRFAgent(options: { allowPrivate?: boolean } = {}): Agent {
+  const { allowPrivate = false } = options;
+
+  function safeLookup(
+    hostname: string,
+    opts: unknown,
+    cb: (err: NodeJS.ErrnoException | null, address?: string | LookupAddress[], family?: number) => void
+  ): void {
+    const cleanHost = stripBrackets(hostname);
+    if (!allowPrivate && BLOCKED_HOSTNAMES.has(cleanHost.toLowerCase())) {
+      const blockErr = Object.assign(new Error(`目标主机名在黑名单中 (${hostname})`), {
+        code: 'ERR_SSRF_BLOCKED',
+      });
+      return cb(blockErr, '');
+    }
+
+    callbackLookup(cleanHost, { all: true }, (err, addresses) => {
+      if (err) return cb(err, '');
+      const list = Array.isArray(addresses) ? addresses : [];
+      if (list.length === 0) {
+        return cb(new Error(`未找到主机地址: ${hostname}`), '');
+      }
+      if (!allowPrivate) {
+        for (const item of list) {
+          if (isPrivateIP(item.address)) {
+            const blockErr = Object.assign(new Error(`目标地址解析到私有/保留网络 (${item.address})`), {
+              code: 'ERR_SSRF_BLOCKED',
+            });
+            return cb(blockErr, '');
+          }
+        }
+      }
+
+      const wantAll = opts && typeof opts === 'object' && (opts as { all?: boolean }).all;
+      if (wantAll) {
+        cb(null, list);
+      } else {
+        cb(null, list[0].address, list[0].family);
+      }
+    });
+  }
+
+  const baseConnector = buildConnector({
+    lookup: safeLookup as unknown as (
+      hostname: string,
+      options: import('node:dns').LookupOptions,
+      callback: (
+        err: NodeJS.ErrnoException | null,
+        address: string | import('node:dns').LookupAddress[],
+        family?: number
+      ) => void
+    ) => void,
+  });
+
+  function ssrfConnect(opts: buildConnector.Options, cb: buildConnector.Callback) {
+    const cleanHost = stripBrackets(opts.hostname || '');
+    if (!allowPrivate) {
+      if (BLOCKED_HOSTNAMES.has(cleanHost.toLowerCase())) {
+        const blockErr = Object.assign(new Error(`目标主机名在黑名单中 (${cleanHost})`), {
+          code: 'ERR_SSRF_BLOCKED',
+        });
+        return cb(blockErr, null);
+      }
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(cleanHost) || cleanHost.includes(':')) {
+        if (isPrivateIP(cleanHost)) {
+          const blockErr = Object.assign(new Error(`目标地址属于私有/保留网络 (${cleanHost})`), {
+            code: 'ERR_SSRF_BLOCKED',
+          });
+          return cb(blockErr, null);
+        }
+      }
+    }
+    return baseConnector(opts, cb);
+  }
+
+  return new Agent({
+    connect: ssrfConnect,
+    pipelining: 0,
+    keepAliveTimeout: 1,
+    keepAliveMaxTimeout: 1,
+  });
+}
+
+const GLOBAL_FETCH_WRAPPED = Symbol.for('libretv.ssrf.fetch.wrapped');
+
+/**
+ * 安装 fetch 的 SSRF 防护包装器。
+ * 仅在 runWithSSRFProtection 激活的作用域内生效，自动注入专用 Agent，
+ * 不影响作用域外的全局网络通信。
+ */
+export function installFetchSSRFProtection(): void {
+  const g = globalThis as unknown as Record<symbol, boolean>;
+  if (g[GLOBAL_FETCH_WRAPPED]) return;
+  g[GLOBAL_FETCH_WRAPPED] = true;
+
+  const originalFetch = globalThis.fetch;
+
+  globalThis.fetch = async function ssrfProtectedFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit & { dispatcher?: unknown }
+  ): Promise<Response> {
+    const ctx = ssrfStorage.getStore();
+    if (!ctx || !ctx.active) {
+      return originalFetch(input, init);
+    }
+
+    const agent = createSSRFAgent({ allowPrivate: ctx.allowPrivate });
+    try {
+      const res = await originalFetch(input, {
+        ...init,
+        dispatcher: agent,
+      } as RequestInit);
+      // 收到响应后关闭 Agent：不要把连接池跨请求保留下来
+      agent.close().catch(() => {});
+      return res;
+    } catch (err) {
+      agent.destroy().catch(() => {});
+      throw err;
+    }
+  };
+}
+
+// 模块加载时自动安装
+installFetchSSRFProtection();
+
+/** 在受连接级 SSRF / DNS Rebinding 防护的作用域中执行异步请求 */
+export function runWithSSRFProtection<T>(
+  options: { allowPrivate?: boolean } = {},
+  fn: () => Promise<T>
+): Promise<T> {
+  return ssrfStorage.run({ active: true, allowPrivate: options.allowPrivate }, fn);
 }

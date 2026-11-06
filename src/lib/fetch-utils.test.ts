@@ -55,3 +55,33 @@ describe('fetchUpstream 安全跳转', () => {
     await expect(fetchUpstream(PUBLIC_URL)).rejects.toThrow(/重定向次数过多/);
   });
 });
+
+/**
+ * 连接层拦截的错误翻译：底层抛的是 `TypeError: fetch failed`，
+ * 真正原因在 cause.code 里。不翻译的话用户只会看到「上游请求失败」。
+ */
+describe('连接级 SSRF 错误翻译', () => {
+  const blocked = () =>
+    Object.assign(new Error('fetch failed'), {
+      cause: { code: 'ERR_SSRF_BLOCKED', message: '目标地址解析到私有/保留网络 (127.0.0.1)' },
+    });
+
+  it('安全跳转模式下转换为可读错误', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(blocked())));
+    await expect(fetchUpstream(PUBLIC_URL)).rejects.toThrow(
+      /连接目标被拒绝: 目标地址解析到私有\/保留网络/
+    );
+  });
+
+  it('safeRedirects 为 false 时同样转换（自动跟随不能绕过连接层校验）', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(blocked())));
+    await expect(fetchUpstream(PUBLIC_URL, { safeRedirects: false })).rejects.toThrow(
+      /连接目标被拒绝: 目标地址解析到私有\/保留网络/
+    );
+  });
+
+  it('其他网络错误原样抛出，不伪装成 SSRF 拦截', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+    await expect(fetchUpstream(PUBLIC_URL)).rejects.toThrow('fetch failed');
+  });
+});
