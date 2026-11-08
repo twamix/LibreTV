@@ -30,6 +30,11 @@ export interface AppSettings {
    * 因此只作为用户显式开启的兜底，不作为出厂默认。
    */
   volumeBoost: boolean;
+  /**
+   * 底部细进度条（默认开启）：控制栏收起后是否在画面底边常驻一条 3px 进度线。
+   * 关闭后收起即完全隐藏，见 lib/mini-progress-bar.ts。
+   */
+  miniProgressBar: boolean;
   imageProxyMode: 'direct' | 'proxy' | 'custom';
   /** 用户是否在设置中主动选择过封面图加载方式；为 false 时部署者的 DEFAULT_IMAGE_MODE 默认值可生效 */
   imageProxyModeTouched: boolean;
@@ -301,6 +306,8 @@ export const useAppStore = create<AppState>()(
       autoplayNext: true,
       // 音量放大默认关闭：开启后对所有音量档位整体抬高约 1.8 倍，交给用户显式选择
       volumeBoost: false,
+      // 底部细进度条默认开启：不替用户改动多年既有观感
+      miniProgressBar: true,
       imageProxyMode: 'proxy',
       imageProxyModeTouched: false,
       customImageProxy: '',
@@ -738,6 +745,7 @@ export const useAppStore = create<AppState>()(
         recommendSourceTouched: s.recommendSourceTouched,
         autoplayNext: s.autoplayNext,
         volumeBoost: s.volumeBoost,
+        miniProgressBar: s.miniProgressBar,
         imageProxyMode: s.imageProxyMode,
         imageProxyModeTouched: s.imageProxyModeTouched,
         customImageProxy: s.customImageProxy,

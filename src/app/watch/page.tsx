@@ -244,6 +244,7 @@ function WatchContent() {
                   onPrevEpisode={() => goEpisode(currentIndex - 1)}
                   onNextEpisode={() => goEpisode(currentIndex + 1)}
                   volumeBoost={store.volumeBoost}
+                  miniProgressBar={store.miniProgressBar}
                   // 播放器实测分辨率回写到「源 + 影片」的画质缓存：权威值，
                   // 会覆盖服务端探测得到的推断值（from: 'play'）
                   onQuality={(height) => {
