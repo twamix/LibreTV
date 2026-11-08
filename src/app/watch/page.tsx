@@ -181,7 +181,7 @@ function WatchContent() {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 h-14 flex items-center gap-1.5 sm:gap-3">
           <BackButton />
           <HomeButton />
           <div className="min-w-0">
@@ -191,7 +191,7 @@ function WatchContent() {
               {episodes.length > 0 && ` · 第 ${currentIndex + 1}/${episodes.length} 集`}
             </p>
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               className="btn-ghost !py-1.5 text-xs"
               onClick={() => {
@@ -206,7 +206,10 @@ function WatchContent() {
                 // 这里先提示的话，用户随后取消保存位置会出现「已加入→已取消」的矛盾
               }}
             >
-              下载本集
+              {/* 手机上顶栏放不下完整按钮：只留图标，sr-only 保证可访问性 */}
+              <Icon name="download" className="w-4 h-4 sm:hidden" />
+              <span className="hidden sm:inline">下载本集</span>
+              <span className="sr-only sm:hidden">下载本集</span>
             </button>
             <button className="btn-ghost !py-1.5 text-xs" onClick={() => setSwitchOpen(true)}>
               切换资源
@@ -321,7 +324,8 @@ function WatchContent() {
                 {detailQuery.isLoading ? '加载中...' : detailQuery.isError ? '获取剧集失败' : '暂无剧集信息'}
               </p>
             ) : (
-              <div className="grid grid-cols-5 lg:grid-cols-4 gap-1.5 max-h-[65vh] overflow-y-auto scrollbar-thin pr-1">
+              // 手机 6 列：侧栏在窄屏是单列全宽，5 列会让集数按钮偏大而浪费空间
+              <div className="grid grid-cols-6 sm:grid-cols-8 lg:grid-cols-4 gap-1.5 max-h-[65vh] overflow-y-auto scrollbar-thin pr-1">
                 {orderedEpisodes.map((realIndex) => (
                   <EpisodeButton
                     key={realIndex}

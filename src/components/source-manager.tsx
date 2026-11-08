@@ -239,7 +239,8 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
   if (!settingsUnlocked) return null;
 
   return (
-    <Drawer open={open} onClose={onClose} title="设置">
+    // 设置抽屉内容多、分组长：手机端用近全屏底部面板，桌面端保持右侧栏
+    <Drawer open={open} onClose={onClose} title="设置" mobileFull>
       {/* 分类 Tab 条：-mt-4 抵消内容容器的上内边距使其贴合标题栏；sticky 吸附在标题栏下方（标题栏高 60px + 1px 边框） */}
       <div className="sticky top-[61px] z-10 -mx-4 -mt-4 px-4 pt-3 pb-2.5 bg-surface-raised border-b border-line flex gap-1">
         {SETTINGS_TABS.map((tab) => (

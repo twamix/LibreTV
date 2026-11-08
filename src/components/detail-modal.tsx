@@ -121,13 +121,19 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/80 py-10 px-4 animate-fade-in"
+      // 手机：贴底（align-items: flex-end），上下不留白；平板/桌面：居中弹窗
+      className="fixed inset-0 z-[60] flex items-end sm:items-start justify-center sm:overflow-y-auto bg-black/80 sm:py-10 px-0 sm:px-4 animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-surface-raised rounded-xl w-full max-w-3xl shadow-2xl animate-slide-up" role="dialog" aria-modal>
-        <div className="flex items-start justify-between gap-4 p-5 pb-3 border-b border-line">
+      <div
+        // 手机：底部抽屉（顶部圆角 + 安全区 + 内部独立滚动）；桌面：居中卡片
+        className="bg-surface-raised rounded-t-2xl sm:rounded-xl w-full max-w-3xl shadow-2xl animate-slide-up flex flex-col max-h-[92dvh] sm:max-h-none"
+        role="dialog"
+        aria-modal
+      >
+        <div className="flex items-start justify-between gap-4 p-5 pb-3 border-b border-line shrink-0">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-content break-words">{item.name}</h2>
             <span className="text-sm text-faint">{item.sourceName}</span>
@@ -143,7 +149,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
           </button>
         </div>
 
-        <div className="p-5 pt-4">
+        <div className="p-5 pt-4 pb-[calc(1.25rem_+_env(safe-area-inset-bottom))] sm:pb-5 flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin">
           {loading && (
             <div className="flex flex-col items-center py-10 gap-3">
               <div className="h-8 w-8 rounded-full border-4 border-line border-t-accent animate-spin" />
@@ -160,7 +166,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
 
           {!loading && !error && detail && (
             <>
-              <div className="flex flex-col sm:flex-row gap-4 mb-4">
+              <div className="flex gap-4 mb-4">
                 {poster && !posterFailed && (
                   <SmartImage
                     url={item.pic}
@@ -168,7 +174,9 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
                     customProxy={store.customImageProxy}
                     alt={item.name}
                     loading="eager"
-                    className="w-24 sm:w-32 aspect-[2/3] object-cover rounded-lg bg-chip shrink-0 self-center sm:self-start"
+                    // 必须 self-start：flex 默认 align-items: stretch 会把海报拉到
+                    // 与信息列等高，aspect-[2/3] 让位后比例被破坏（实测 80×204）
+                    className="w-20 sm:w-32 aspect-[2/3] object-cover rounded-lg bg-chip shrink-0 self-start"
                     onExhausted={() => setPosterFailed(true)}
                   />
                 )}
@@ -210,7 +218,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
                       复制链接
                     </button>
                   </div>
-                  <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 gap-2 max-h-[40vh] overflow-y-auto scrollbar-thin pr-1">
+                  <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 gap-2 max-h-[40vh] overflow-y-auto scrollbar-thin pr-1">
                     {episodes.map((_, i) => {
                       const realIndex = reversed ? detail.episodes.length - 1 - i : i;
                       return (

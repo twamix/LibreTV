@@ -15,12 +15,19 @@ export function Drawer({
   title,
   children,
   width = 'max-w-md',
+  mobileFull = false,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   width?: string;
+  /**
+   * 小屏（<sm）改为近全屏底部面板（默认 false）。
+   * 设置抽屉里分好几组、每组又有若干开关与输入框，60vh 在手机上明显不够用；
+   * 近全屏仍保留顶部一条露出遮罩，点空白处即可关闭。
+   */
+  mobileFull?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -40,11 +47,20 @@ export function Drawer({
         ref={ref}
         className={cn(
           'absolute right-0 top-0 h-full w-full bg-surface-raised border-l border-line overflow-y-auto scrollbar-thin animate-slide-up',
-          width
+          width,
+          // 手机端改为底部近全屏面板：贴底、顶部圆角、撑满高度，留出安全区内边距
+          mobileFull &&
+            'max-sm:inset-x-0 max-sm:top-auto max-sm:bottom-0 max-sm:h-[92dvh] max-sm:max-w-none max-sm:rounded-t-xl max-sm:border-t max-sm:border-l-0 max-sm:pb-[env(safe-area-inset-bottom)]'
         )}
         role="dialog"
         aria-label={title}
       >
+        {mobileFull && (
+          /* 顶部把手：明确「这是可关闭的底部面板」，只在手机形态出现 */
+          <div className="hidden max-sm:flex shrink-0 justify-center pt-2 pb-0.5" aria-hidden>
+            <span className="h-1 w-10 rounded-full bg-line" />
+          </div>
+        )}
         <div className="sticky top-0 bg-surface-raised px-4 py-3.5 border-b border-line flex items-center justify-between z-10">
           <h2 className="font-semibold text-content">{title}</h2>
           <button

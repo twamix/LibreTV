@@ -117,6 +117,33 @@ body {
 }
 
 /*
+ * iOS Safari 聚焦字号小于 16px 的输入框时会强制放大整页，且放大后不自动缩回
+ * （页面上表现为「错位」）。触屏窄屏下把表单控件统一提到 16px，桌面端保持原字号。
+ * 断点用 639px（Tailwind sm 的下沿）而不是 767px：其余响应式都以 sm 为界，
+ * 用 767px 会让 640–767 这一段落到「桌面版式 + 手机字号」的混搭区间。
+ */
+@media (max-width: 639px) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/*
+ * 触屏设备：放大可点区域，避免 12px 小字按钮/标签在手机上难以点中。
+ * 只作用在粗指针（手指）环境，不影响桌面鼠标的操作精度。
+ */
+@media (pointer: coarse) {
+  .tag {
+    @apply inline-flex items-center min-h-[26px] px-2;
+  }
+  .btn {
+    @apply min-h-[38px];
+  }
+}
+
+/*
  * 播放器控制条在窄屏没有多余横向空间：
  * 上/下集控件会把右侧的「网页全屏」「全屏」挤出可视区（手机上表现为图标显示不全）。
  * 只在窄于 640px 时收起这些控件——手机横屏、平板仍有空间，可以保留。

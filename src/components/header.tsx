@@ -7,7 +7,7 @@ import { ThemeToggle } from './theme';
 import { SourceManagerDrawer } from './source-manager';
 import { HistoryPanel } from './history-panel';
 import { SearchHistoryDropdown, useSearchHistory } from './search-history';
-import { Icon } from './icon';
+import { Icon, type IconName } from './icon';
 import { requestShowDownloadManager } from './download-manager';
 import { useAuth } from './auth';
 import { cn } from '@/lib/utils';
@@ -19,14 +19,26 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
   const { settingsUnlocked, openLogin } = useAuth();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** 移动端（<sm）折叠菜单：窄屏放不下导航项与多个图标按钮 */
+  const [menuOpen, setMenuOpen] = useState(false);
   const [query, setQuery] = useState('');
   // 与首页搜索框共用同一套「最近搜索」下拉逻辑
   const searchHistory = useSearchHistory(query);
+
+  const closeMenu = () => setMenuOpen(false);
+
+  /** 设置入口需要密码：未解锁先弹解锁框，成功后再打开抽屉 */
+  const openSettings = () => {
+    closeMenu();
+    if (settingsUnlocked) setSettingsOpen(true);
+    else openLogin(() => setSettingsOpen(true));
+  };
 
   const submitSearch = (text: string) => {
     const q = text.trim().slice(0, 100);
     if (!q) return;
     searchHistory.close();
+    closeMenu();
     router.push(`/?s=${encodeURIComponent(q)}`, { scroll: false });
     // 顶栏搜索一并写入最近搜索
     searchHistory.record(q);
@@ -40,7 +52,7 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
   return (
     <>
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-3">
           <Link href="/" aria-label="TV 首页" className="flex items-center shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/icons/icon-512.png" alt="TV" className="w-7 h-7 rounded-lg" />
@@ -96,9 +108,11 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
             </form>
           )}
 
+          {/* 窄屏占位：把右侧按钮组推到边上（桌面搜索框已用 flex-1 占位） */}
           <div className="flex-1 sm:hidden" />
 
-          <nav className="flex items-center gap-1 ml-auto">
+          {/* 桌面 / 平板：完整导航 */}
+          <nav className="hidden sm:flex items-center gap-1 ml-auto">
             <HeaderLink href="/live" active={pathname === '/live'}>
               直播
             </HeaderLink>
@@ -112,20 +126,52 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
               </svg>
             </IconButton>
             {/* 设置入口需要密码：未解锁先弹解锁框，成功后再打开抽屉（未配置 PASSWORD 时提示管理员） */}
-            <IconButton
-              label="设置"
-              onClick={() => {
-                if (settingsUnlocked) setSettingsOpen(true);
-                else openLogin(() => setSettingsOpen(true));
-              }}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
+            <IconButton label="设置" onClick={openSettings}>
+              <Icon name="gear" className="w-5 h-5" />
             </IconButton>
           </nav>
+
+          {/* 手机：设置直接露出（最常用），其余收进汉堡菜单 */}
+          <div className="sm:hidden flex items-center gap-1 shrink-0">
+            <IconButton label="设置" onClick={openSettings}>
+              <Icon name="gear" className="w-5 h-5" />
+            </IconButton>
+            <IconButton
+              label={menuOpen ? '关闭菜单' : '打开菜单'}
+              expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <Icon name={menuOpen ? 'close' : 'menu'} className="w-5 h-5" />
+            </IconButton>
+          </div>
         </div>
+
+        {/* 手机折叠菜单：链接 + 次要操作；点任一项后自动收起 */}
+        {menuOpen && (
+          <nav
+            aria-label="主菜单"
+            className="sm:hidden border-t border-line bg-surface/95 backdrop-blur px-3 py-2 pb-[calc(0.5rem_+_env(safe-area-inset-bottom))] animate-fade-in"
+          >
+            <div className="grid grid-cols-2 gap-1.5">
+              <MenuRow href="/live" active={pathname === '/live'} icon="bolt" onNavigate={closeMenu}>
+                直播
+              </MenuRow>
+              <MenuAction icon="clock" onClick={() => { closeMenu(); setHistoryOpen(true); }}>
+                观看历史
+              </MenuAction>
+              <MenuAction icon="download" onClick={() => { closeMenu(); requestShowDownloadManager(); }}>
+                下载管理
+              </MenuAction>
+              <MenuRow href="/" active={pathname === '/'} icon="home" onNavigate={closeMenu}>
+                首页
+              </MenuRow>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between rounded-lg bg-chip px-3 py-2">
+              <span className="text-xs text-muted">外观主题</span>
+              <ThemeToggle />
+            </div>
+          </nav>
+        )}
       </header>
 
       <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
@@ -148,14 +194,76 @@ function HeaderLink({ href, active, children }: { href: string; active: boolean;
   );
 }
 
-function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
+function IconButton({
+  label,
+  onClick,
+  expanded,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  /** 展开态按钮（汉堡菜单）需要 aria-expanded 告知辅助技术 */
+  expanded?: boolean;
+  children: React.ReactNode;
+}) {
   return (
     <button
       className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
       title={label}
       aria-label={label}
+      aria-expanded={expanded}
       onClick={onClick}
     >
+      {children}
+    </button>
+  );
+}
+
+/** 手机折叠菜单里的导航项（整行可点，热区 ≥40px） */
+function MenuRow({
+  href,
+  active,
+  icon,
+  onNavigate,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  icon: IconName;
+  onNavigate: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      onClick={onNavigate}
+      className={cn(
+        'flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm transition-colors',
+        active ? 'bg-hover text-content' : 'text-muted hover:bg-hover hover:text-content'
+      )}
+    >
+      <Icon name={icon} className="w-4 h-4 shrink-0" />
+      {children}
+    </Link>
+  );
+}
+
+/** 手机折叠菜单里的动作项（打开抽屉，不是跳转） */
+function MenuAction({
+  icon,
+  onClick,
+  children,
+}: {
+  icon: IconName;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted transition-colors hover:bg-hover hover:text-content"
+    >
+      <Icon name={icon} className="w-4 h-4 shrink-0" />
       {children}
     </button>
   );
