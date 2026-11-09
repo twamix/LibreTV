@@ -5,7 +5,11 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import type { QualityEntry, SourceConfig, LiveSourceConfig, SourceSearchOutcome } from './types';
 import { isQualityEntryFresh, mergeQualityEntries, qualityKey } from './quality';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
-import { PERSIST_KEY, createThrottledStorage } from './persist-storage';
+import {
+  PERSIST_KEY,
+  createThrottledStorage,
+  subscribePersistChanges,
+} from './persist-storage';
 import { api, ApiError } from './client-api';
 
 /**
@@ -278,6 +282,13 @@ function nextCustomKey(apiList: SourceConfig[]): string {
   while (used.has(`custom_${i}`)) i++;
   return `custom_${i}`;
 }
+
+/**
+ * 持久化存储单例。
+ * store 需要它做两件事：persist 的读写，以及把「已交给 store 的快照」同步给
+ * 字段 diff 基线——后者是跨标签不互相覆盖的前提。
+ */
+const persistStorage = createThrottledStorage();
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -707,7 +718,8 @@ export const useAppStore = create<AppState>()(
     {
       name: PERSIST_KEY,
       // 节流写入：搜索 / 测活等高频 set 不再每次都整份序列化写盘
-      storage: createJSONStorage(createThrottledStorage),
+      // 单实例：下面还要拿它 syncSnapshot 建字段 diff 基线，不能每次调用都新建一个
+      storage: createJSONStorage(() => persistStorage),
       // v1：直播源新增 fromSubscription 归属字段、最近观看新增 sourceUrl。
       // 此前未声明 version，存量数据会被视为 v0 并走 migrate 补齐（缺失字段按「手动添加」处理）。
       version: 1,
@@ -757,6 +769,27 @@ export const useAppStore = create<AppState>()(
     }
   )
 );
+
+/**
+ * 把当前要持久化的字段同步为 diff 基线。
+ * 基线必须是「store 实际持有的持久化字段」：hydration 会补缺省值，若基线与
+ * store 不一致，下次普通 set 会把补入的默认值误认成本标签的修改，落盘时反过来
+ * 覆盖另一个标签刚改的偏好。
+ */
+const syncPersistSnapshot = (state: AppState) => {
+  const { partialize, version } = useAppStore.persist.getOptions();
+  if (partialize) {
+    persistStorage.syncSnapshot(partialize(state) as Record<string, unknown>, version);
+  }
+};
+syncPersistSnapshot(useAppStore.getState());
+useAppStore.persist.onFinishHydration(syncPersistSnapshot);
+
+// 磁盘被别的标签改动时重新读取（rehydrate 只读不写，不会反过来触发落盘）。
+// 首次恢复仍由 Providers 在挂载后执行，避免 SSR hydration 不一致。
+subscribePersistChanges(() => {
+  if (useAppStore.persist.hasHydrated()) void useAppStore.persist.rehydrate();
+});
 
 /**
  * 从 IndexedDB 恢复测活缓存（Providers 挂载后、persist.rehydrate 之后调用）。
